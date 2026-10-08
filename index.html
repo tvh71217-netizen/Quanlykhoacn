@@ -8593,16 +8593,56 @@ function autoResolveRecon(itemId, pair){
   if(changed) syncPendingDates(it);
   return { changed: changed, missing: missing };
 }
+/* TRỪ PHẦN SL CÒN NỢ khi đồng bộ.
+   Lỗi cũ: kho A chưa có mã X (hoặc không đủ) mà kho B vẫn "Nhập từ kho A" -> lúc đó SL của A
+   bị chặn ở 0 nên phần thiếu (shortQty) không trừ được. Sau này A nhập X về, bấm Đồng bộ chỉ gỡ
+   ô DATE (autoResolveRecon) còn SL thì chỉ so sánh rồi tắt cờ, không hề trừ -> A dư SL, lệch date.
+   Hàm này trừ đúng phần nợ đó vào SL (trừ được bao nhiêu thì trừ, phần còn thiếu giữ nguyên cờ),
+   rồi bỏ bớt ô date TRỐNG cho dates.length không vượt SL (không bao giờ gỡ date thật). */
+function settleShortQty(it, pair){
+  let res = { deducted: 0, left: 0 };
+  if(!it) return res;
+  (db.transactions || []).forEach(t => {
+    if(!t || t.whId !== it.whId || !(t.shortQty > 0)) return;
+    if(codeKey(t.code) !== codeKey(it.code)) return;
+    if(pair && String(t.autoPair || t.swapPair || "") !== pair) return;
+    let have = it.qty || 0;
+    let k = Math.min(have, t.shortQty);
+    if(k > 0){
+      it.qty = have - k;
+      t.shortQty -= k;
+      res.deducted += k;
+    }
+    res.left += t.shortQty;
+  });
+  if(res.deducted > 0){
+    if(!(it.qty > 0)){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
+    else {
+      it.dates = (it.dates || []).slice();
+      while(it.dates.length > it.qty){
+        let i = it.dates.findIndex(x => String(x || "").trim() === "");
+        if(i < 0) break;
+        it.dates.splice(i, 1);
+      }
+    }
+    syncPendingDates(it);
+  }
+  return res;
+}
 /* Đồng bộ riêng mục "thiếu date" (không có giao dịch đứng sau để bám vào, chỉ có itemId+pair) */
 function gapSyncDate(itemId, pair){
   let it = db.items.find(i => i.id === itemId);
   if(!it || !guardWh(it.whId, "xử lý đối chiếu")) return;
   let res = autoResolveRecon(itemId, pair);
-  if(res.changed) saveDB();
+  let sq = settleShortQty(it, pair);          // trừ luôn phần SL còn nợ, không chỉ gỡ date
+  if(res.changed || sq.deducted > 0) saveDB();
   try{ renderKhoTable(it.whId); }catch(e){}
   try{ renderSearch(); }catch(e){}
   try{ updateReconAlert(); }catch(e){}
-  if(res.missing.length) alert(`⚠️ Kho ${escapeHtml(whName(it.whId))} vẫn chưa có date ${res.missing.join(", ")} — chưa gỡ được hết, kho đó nhập bổ sung rồi bấm lại.`);
+  let m1 = [];
+  if(res.missing.length) m1.push(`vẫn chưa có date ${res.missing.join(", ")}`);
+  if(sq.left > 0) m1.push(`còn thiếu ${sq.left} cái SL chưa trừ được (tồn chưa đủ)`);
+  if(m1.length) alert(`⚠️ Kho ${escapeHtml(whName(it.whId))} ` + m1.join("; ") + ` — chưa gỡ được hết, kho đó nhập bổ sung rồi bấm lại.`);
   refreshGapView();
 }
 /* Đồng bộ mục "thiếu SL" / "chưa có mã" — bám theo giao dịch gốc để biết cần bù bao nhiêu */
@@ -8621,8 +8661,15 @@ function gapSync(txId){
   }
   if(t.shortQty > 0){
     let have = it ? (it.qty || 0) : 0;
-    if(have >= t.shortQty){ t.shortQty = 0; changed = true; }
-    else msgs.push(`tồn hiện có ${have} cái, còn thiếu ${t.shortQty - have} cái mới đủ`);
+    if(it && have > 0){
+      /* TRỪ THẬT phần SL còn nợ vào tồn kho (trước đây chỉ tắt cờ, SL không giảm) */
+      let sq = settleShortQty(it, pair);
+      if(sq.deducted > 0) changed = true;
+    }
+    if(t.shortQty > 0){
+      let have2 = it ? (it.qty || 0) : 0;
+      msgs.push(`tồn hiện có ${have2} cái, còn thiếu ${t.shortQty} cái chưa trừ được`);
+    }
   }
   if(t.partnerNew){
     let reconLeft = it ? (it.recon || []).some(r => String(r.pair || "") === pair) : false;
