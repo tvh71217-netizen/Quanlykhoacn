@@ -8573,26 +8573,25 @@ function gotoRecon(itemId){
    thì báo rõ còn thiếu bao nhiêu rồi thôi, giữ đúng nguyên tắc "màn hình này không
    sửa số liệu". Trả lại phần còn thiếu qua alert để người bấm biết cần làm gì tiếp. */
 /* Gỡ MỘT đơn vị date khỏi mã do kho khác đã lấy đi lô đó.
-   Lỗi cũ: chỉ splice date, không trừ SL. Khi người dùng "nhập bổ sung" lô X về (SL +1, date +X)
-   rồi bấm Đồng bộ / Mở để xử lý, lô X thực tế đã đi rồi nên phải trừ cả SL, không thì SL dư 1
-   và hiện "Chưa nhập date" (vd SL 2 mà chỉ còn 1 date).
-   Ngoại lệ: nếu số date đang NHIỀU HƠN SL (date thừa còn sót lại từ lúc SL đã bị trừ rồi) thì
-   chỉ gỡ date, SL đã đúng. Nếu mã còn nợ SL (shortQty) thì trả bớt nợ 1 để settleShortQty
-   không trừ lần nữa. Trả về false nếu mã chưa có date đó. */
+   Nguyên tắc sổ sách: lúc kho khác lấy hàng, SL của kho này ĐÃ bị trừ đủ — trừ khi tồn không
+   đủ (bị chặn ở 0), phần thiếu được ghi thành "nợ SL" (shortQty trên giao dịch). Vì vậy:
+   - gỡ date chỉ đổi ô date, KHÔNG đụng SL (nhập bổ sung lô về rồi gỡ date thì SL về đúng tồn);
+   - SL chỉ bị trừ thêm để TRẢ NỢ: mỗi đơn vị gỡ trả tối đa 1 đơn vị nợ của đúng chuyến đó,
+     để settleShortQty không trừ lại lần nữa.
+   (Bản trước đoán theo số date nên trừ dư SL khi kho tồn ít hơn số bị lấy.) */
 function consumeReconUnit(it, r){
   if(!it || !r) return false;
   let key = String(r.d || "").trim().toUpperCase();
   let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === key);
   if(i < 0) return false;
-  let excess = (it.dates || []).length > (it.qty || 0);
   it.dates.splice(i, 1);
-  if(!excess && (it.qty || 0) > 0){
+  let pr = String(r.pair || "");
+  let t = (db.transactions || []).find(x => x && x.whId === it.whId && x.shortQty > 0
+    && codeKey(x.code) === codeKey(it.code)
+    && (!pr || String(x.autoPair || x.swapPair || "") === pr));
+  if(t && (it.qty || 0) > 0){
     it.qty = it.qty - 1;
-    let pr = String(r.pair || "");
-    let t = (db.transactions || []).find(x => x && x.whId === it.whId && x.shortQty > 0
-      && codeKey(x.code) === codeKey(it.code)
-      && (!pr || String(x.autoPair || x.swapPair || "") === pr));
-    if(t) t.shortQty -= 1;
+    t.shortQty -= 1;
     if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
   }
   return true;
