@@ -4853,16 +4853,13 @@ function processTransaction(){
     db.transactions.push(inTx);
 
     syncPendingDates(item);
-    /* Nhập bổ sung lô mà kho khác ĐÃ lấy đi (đang treo "Cần đối chiếu") -> tự đối chiếu luôn:
-       gỡ date + trả nợ SL ngay lúc nhập, khỏi phải vào Đối chiếu bấm Đồng bộ. */
-    let autoMsg = autoSettleReconOnIn(item);
     let msg = "";
     if(from){
       msg = autoPartner("recv", { whId: whId, partner: from, code: code, brand: item.brand,
         qty: qty, dates: dates.slice(), ts: inTx.ts, pair: inTx.id });
       inTx.autoPair = inTx.id;
     }
-    if(autoMsg) msg = (msg ? msg + "\n" : "") + autoMsg;
+
     finishTransaction(whId);
     reportAuto(msg);
 
@@ -5251,14 +5248,17 @@ function ensurePartnerItem(wh, code, brand){
    date không có — làm vậy là bịa số liệu cho kho người ta. Kho kia thiếu date thì
    chỉ gỡ ô còn trống (ô chưa nhập date, gỡ vô hại); hết ô trống thì để nguyên và
    trả date đó về cho autoPartner ghi thành dòng "Cần đối chiếu". */
-function pullDatesOut(item, dates){
+function pullDatesOut(item, dates, virtual){
   let left = (item.dates || []).slice();
   let odd = [];   // date mà kho bên kia không có -> treo lại để đối chiếu
   (dates || []).forEach(d => {
     let key = String(d || "").trim().toUpperCase();
     let i = left.findIndex(x => String(x || "").trim().toUpperCase() === key);
     if(i < 0){
-      if(key) odd.push(key);
+      if(key){
+        odd.push(key);
+        if(virtual) return;      // date thật mà kho này không có: KHÔNG đụng ô nào, xử lý bằng "cộng tạm"
+      }
       i = left.findIndex(x => String(x || "").trim() === "");   // chỉ dám gỡ ô trống
     }
     if(i >= 0) left.splice(i, 1);
@@ -5276,21 +5276,34 @@ function reconWho(){
          ? ((cloudUser.name || "") + (cloudUser.code ? " (" + cloudUser.code + ")" : "")).trim()
          : "";
 }
-function addRecon(it, odds, fromName, ts, pair){
+function addRecon(it, odds, fromName, ts, pair, virt){
   if(!it || !odds || !odds.length) return;
   if(!Array.isArray(it.recon)) it.recon = [];
   let by = reconWho();
   odds.forEach(d => {
-    let ex = it.recon.find(r => r.d === d && r.from === fromName && r.pair === pair);
+    let ex = it.recon.find(r => r.d === d && r.from === fromName && r.pair === pair && !!r.v === !!virt);
     if(ex) ex.q = (ex.q || 1) + 1;
     else it.recon.push({ id: uid(), d: d, q: 1, from: fromName || "", by: by, pair: pair || "",
-                         ts: ts || new Date().toISOString() });
+                         ts: ts || new Date().toISOString(), v: virt ? true : undefined });
   });
 }
 let _reconItemId = null;
 function openRecon(itemId){
   let it = db.items.find(i => i.id === itemId);
   if(!it || !((it.recon || []).length)) return;
+  /* Toàn bộ là SL/date "cộng tạm" -> bấm vào cảnh báo là trừ luôn (hỏi xác nhận 1 lần) */
+  if(canWriteWh(it.whId) && it.recon.every(r => r.v && (it.dates || []).some(x => String(x || "").trim().toUpperCase() === String(r.d || "").trim().toUpperCase()))){
+    askConfirm(`Đối chiếu mã ${it.code} — kho ${whName(it.whId)}:\nTrừ ${reconLabel(it)} (SL và date) đã cộng tạm vì kho khác lấy lô này?`,
+      function(){
+        autoResolveRecon(it.id, "");
+        syncPendingDates(it);
+        saveDB();
+        renderKhoTable(it.whId);
+        try{ renderSearch(); }catch(e){}
+        try{ updateReconAlert(); }catch(e){}
+      }, "Trừ SL + date");
+    return;
+  }
   _reconItemId = itemId;
   renderReconBody();
   document.getElementById("reconModal").classList.add("active");
@@ -5307,7 +5320,7 @@ function renderReconBody(){
   let ro = !canWriteWh(it.whId);
   box.innerHTML =
     `<div class="hint" style="margin:0 0 8px;">Mã <b>${escapeHtml(it.code)}</b> — kho ${escapeHtml(whName(it.whId))}.
-       Kho khác đã lấy hàng theo date mà sổ kho này chưa có, nên số lượng đã trừ còn ô date thì giữ nguyên.</div>` +
+       Kho khác đã lấy hàng theo date mà sổ kho này chưa có. Dòng "Trừ SL + date" là phần app đã cộng tạm — bấm để trừ lại.</div>` +
     it.recon.map(r => `
       <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;">
         <div><b>${escapeHtml(r.d)}</b> × ${r.q || 1} — kho ${escapeHtml(r.from || "?")} lấy
@@ -5315,9 +5328,9 @@ function renderReconBody(){
         ${ro ? `<div class="hint" style="margin:6px 0 0;">Kho khác — chỉ người phụ trách kho này xử lý được.</div>`
              : `<div class="row" style="gap:6px;margin:8px 0 0;">
                   <button class="primary" style="padding:6px 10px;font-size:12px;"
-                    onclick="reconPull('${r.id}')">Đã nhập bổ sung — gỡ ${escapeHtml(r.d)}</button>
+                    onclick="reconPull('${r.id}')">${r.v ? "Trừ SL + date " : "Đã nhập bổ sung — gỡ "}${escapeHtml(r.d)}</button>
                   <button class="ghost" style="padding:6px 10px;font-size:12px;"
-                    onclick="reconDismiss('${r.id}')">Số liệu đã đúng — bỏ nhắc</button>
+                    onclick="reconDismiss('${r.id}')">${r.v ? "Là hàng thật của kho này — giữ lại" : "Số liệu đã đúng — bỏ nhắc"}</button>
                 </div>`}
       </div>`).join("");
 }
@@ -5385,21 +5398,28 @@ function autoPartner(kind, opts){
       dates: (opts.dates || []).slice(), ts: ts, autoPair: pair, autoBy: myName, autoUser: byWho,
       transferFrom: myName, transferFromName: myName });
   } else if(kind === "recv"){     // mình nhận về -> kho kia XUẤT đi
-    /* Kho kia không đủ hàng (hoặc chưa hề có mã này) -> ghi HẲN vào giao dịch,
-       không chỉ báo một câu rồi thôi. Mục Đối chiếu phải lôi ra được. */
-    let short = Math.max(0, opts.qty - (it.qty || 0));
+    /* Date kho kia KHÔNG có: không đụng tồn thật của họ. Thay vào đó "cộng tạm" đúng SL + date đó
+       vào kho kia (coi như họ quên nhập), gắn cảnh báo "Cần đối chiếu" — người phụ trách bấm vào
+       cảnh báo thì SL và date tạm đó bị trừ đi (lô đã chuyển cho kho nhận). Phần date CÓ thật thì
+       trừ như bình thường. */
+    let odd = pullDatesOut(it, opts.dates, true);
+    let k = odd.length;
+    let dedUnits = Math.max(0, opts.qty - k);
+    let short = Math.max(0, dedUnits - (it.qty || 0));
     if(short > 0) warn = ` ⚠️ Kho ${wh.name} chỉ còn ${it.qty || 0} cái nên số liệu bên đó cần kiểm tra lại.`;
-    let odd = pullDatesOut(it, opts.dates);
-    if(odd.length){
-      addRecon(it, odd, myName, ts, pair);
-      warn += ` ⚠️ Kho ${wh.name} chưa có date ${odd.join(", ")} — KHÔNG gỡ ô date nào của bên đó,`
-            + ` đã ghi vào mục "Cần đối chiếu" của kho ${wh.name} để bên đó xử lý.`;
-    }
-    it.qty = Math.max(0, (it.qty || 0) - opts.qty);
+    it.qty = Math.max(0, (it.qty || 0) - dedUnits);
     if(it.qty === 0){ it.zeroSince = new Date().toISOString(); it.dates = []; }   // về 0 -> xoá sạch date
+    if(k > 0){
+      it.qty = (it.qty || 0) + k;
+      it.dates = (it.dates || []).concat(odd);
+      it.zeroSince = null;
+      addRecon(it, odd, myName, ts, pair, true);
+      warn += ` ℹ️ Kho ${wh.name} chưa có date ${odd.join(", ")} — đã cộng tạm vào kho ${wh.name} kèm cảnh báo`
+            + ` "Cần đối chiếu"; bấm vào cảnh báo đó để trừ SL và date tương ứng.`;
+    }
     db.transactions.push({ id: uid(), whId: wh.id, code: it.code, type: "out", qty: opts.qty,
       dates: (opts.dates || []).slice(), ts: ts, autoPair: pair, autoBy: myName, autoUser: byWho,
-      reconDates: odd.slice(), shortQty: short, partnerNew: !hadItem,
+      reconDates: odd.slice(), virt: k > 0 ? true : undefined, shortQty: short, partnerNew: !hadItem,
       transferTo: myName, transferToName: myName });
   } else if(kind === "swap"){     // mình đưa đi date cũ, nhận về date mới -> kho kia ngược lại
     let odd = pullDatesOut(it, opts.newDates);             // kho kia đưa date mới đi
@@ -5888,7 +5908,23 @@ function revertTransaction(tx){
       };
       db.items.push(item);
     }
-    item.qty = (item.qty || 0) + qty;
+    let virtK = 0;
+    if(tx.virt){
+      /* Kho này từng được "cộng tạm" SL+date: còn treo thì gỡ phần tạm đó, không thì đã trừ rồi.
+         Dù thế nào cũng chỉ trả lại phần đã THẬT SỰ bị trừ (qty - số date cộng tạm). */
+      let keys = new Set([tx.autoPair, tx.swapPair, tx.id].filter(Boolean));
+      (tx.reconDates || []).forEach(d => {
+        virtK++;
+        let r = (item.recon || []).find(x => x.v && normDateKey(x.d) === normDateKey(d) && (!keys.size || !x.pair || keys.has(x.pair)) && (x.q || 0) > 0);
+        if(!r) return;
+        let di = (item.dates || []).findIndex(x => normDateKey(x) === normDateKey(d));
+        if(di >= 0) item.dates.splice(di, 1);
+        item.qty = Math.max(0, (item.qty || 0) - 1);
+        r.q = (r.q || 1) - 1;
+      });
+      item.recon = (item.recon || []).filter(x => (x.q || 0) > 0);
+    }
+    item.qty = (item.qty || 0) + qty - virtK;
     /* Date nào hồi đó chỉ TREO lại (kho này không có, đã ghi Cần đối chiếu) thì
        lúc ấy không gỡ ô nào — giờ cũng không được trả về, không thì tự đẻ ra date. */
     let backDates = txDates.map(d => normDateKey(d));
@@ -6018,8 +6054,8 @@ function shrinkTx(tx, take, wantDates){
 
   // Hoàn phần bị cắt bằng chính revertTransaction cho khỏi lệch logic
   revertTransaction({ whId: tx.whId, code: tx.code, type: tx.type, qty: take,
-                      dates: cut, reconDates: cutRecon });
-  reduceReconOfTx(tx, cutRecon);
+                      dates: cut, reconDates: cutRecon, virt: tx.virt, autoPair: tx.autoPair, swapPair: tx.swapPair, id: tx.id });
+  if(!tx.virt) reduceReconOfTx(tx, cutRecon);
 
   let i = db.transactions.indexOf(tx);
   if(i >= 0) db.transactions.splice(i, 1);
@@ -6028,7 +6064,7 @@ function shrinkTx(tx, take, wantDates){
   let nt = Object.assign({}, tx, { id: uid(), qty: qty - take, dates: dates });
   /* autoPair / swapPair giữ NGUYÊN giá trị cũ nên hai đầu vẫn nhận ra nhau,
      kể cả khi mã cặp chính là id của dòng gốc vừa bị thay. */
-  if(reconLeft.length) nt.reconDates = reconLeft; else delete nt.reconDates;
+  if(reconLeft.length) nt.reconDates = reconLeft; else { delete nt.reconDates; delete nt.virt; }
   db.transactions.push(nt);
 }
 /* Huỷ bớt dòng "Cần đối chiếu" tương ứng phần vừa hoàn */
@@ -8498,7 +8534,7 @@ function collectPartnerGaps(){
     let it = db.items.find(i => i.whId === t.whId && codeKey(i.code) === codeKey(t.code));
     let row = { kind: t.partnerNew ? "code" : "qty", pair: pr, id: t.id,
       itemId: it ? it.id : "", whId: t.whId, whName: swapWhName(t.whId), code: t.code,
-      qty: t.qty || 0, short: t.shortQty || 0, d: (t.reconDates || []).join(", "),
+      qty: t.qty || 0, short: t.shortQty || 0, d: (t.reconDates || []).join(", "), v: !!t.virt,
       from: String(t.autoBy || ""), by: String(t.autoUser || ""), day: day };
     if(t.partnerNew){ newCodePairs.add(pr); out.push(row); }
     else shortPairs.set(pr, row);
@@ -8514,7 +8550,7 @@ function collectPartnerGaps(){
       if(pr && newCodePairs.has(pr)) return;   // đã báo "chưa có mã" rồi
       out.push({ kind: "date", itemId: it.id, pair: pr,
         whId: it.whId, whName: swapWhName(it.whId), code: it.code,
-        d: r.d, q: r.q || 1, from: r.from || "", by: r.by || "",
+        d: r.d, q: r.q || 1, from: r.from || "", by: r.by || "", v: !!r.v,
         day: r.ts ? tsToLocalDateStr(r.ts) : "" });
     });
   });
@@ -8542,7 +8578,8 @@ function gapCard(g){
   if(g.kind === "date"){
     body = `Kho <b>${escapeHtml(g.whName)}</b> <b>không có date ${escapeHtml(g.d)}</b>
             (× ${g.q}) mà kho <b>${escapeHtml(g.from || "?")}</b> đã lấy đi.
-            Số lượng đã trừ, ô date thì giữ nguyên nên hai bên đang lệch.`;
+            ` + (g.v ? `App đã <b>cộng tạm</b> ${g.q} SL + date đó vào kho này — bấm 🔄 Đồng bộ để trừ lại.`
+                     : `Số lượng đã trừ, ô date thì giữ nguyên nên hai bên đang lệch.`);
     act = syncBtn + `<button class="ghost" style="padding:6px 10px;font-size:12px;margin-top:6px;"
              onclick="gotoRecon('${g.itemId}')">Mở để xử lý</button>`;
   } else if(g.kind === "code"){
@@ -8590,6 +8627,14 @@ function consumeReconUnit(it, r){
   let key = String(r.d || "").trim().toUpperCase();
   let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === key);
   if(i < 0) return false;
+  /* Dòng "cộng tạm" (r.v): SL + date này do app tự cộng vào lúc kho khác lấy hàng -> bấm đối chiếu
+     là trừ lại đúng 1 SL + 1 date đó. */
+  if(r.v){
+    it.dates.splice(i, 1);
+    it.qty = Math.max(0, (it.qty || 0) - 1);
+    if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
+    return true;
+  }
   let pr = String(r.pair || "");
   let t = (db.transactions || []).find(x => x && x.whId === it.whId && x.shortQty > 0
     && codeKey(x.code) === codeKey(it.code)
@@ -8601,19 +8646,6 @@ function consumeReconUnit(it, r){
     if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
   }
   return true;
-}
-/* Gọi ngay sau khi NHẬP vào một mã: nếu mã đang treo "Cần đối chiếu" đúng date vừa nhập thì
-   đối chiếu luôn (gỡ date, trả nợ SL qua consumeReconUnit). Trả về câu báo, "" nếu không có gì. */
-function autoSettleReconOnIn(it){
-  if(!it || !Array.isArray(it.recon) || !it.recon.length) return "";
-  let before = reconLabel(it);
-  let qty0 = it.qty || 0;
-  let res = autoResolveRecon(it.id, "");
-  if(!res.changed) return "";
-  syncPendingDates(it);
-  let paid = qty0 - (it.qty || 0);
-  return `✅ Đã tự đối chiếu ${before ? "(" + before + ")" : ""} cho kho ${whName(it.whId)}: ` +
-         (paid > 0 ? `trừ ${paid} SL và gỡ date tương ứng.` : `giữ nguyên SL và date đang có, chỉ tắt cảnh báo.`);
 }
 function autoResolveRecon(itemId, pair){
   let it = db.items.find(i => i.id === itemId);
