@@ -5323,12 +5323,11 @@ function reconPull(rid){
   if(!it || !guardWh(it.whId, "xử lý đối chiếu")) return;
   let r = (it.recon || []).find(x => x.id === rid);
   if(!r) return;
-  let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === r.d);
-  if(i < 0){
+  /* Gỡ date VÀ trừ SL cùng lúc (consumeReconUnit) — trước đây chỉ gỡ date nên SL bị dư 1 */
+  if(!consumeReconUnit(it, r)){
     alert(`Kho này vẫn chưa có date ${r.d} — nhập bổ sung lô đó vào trước đã.`);
     return;
   }
-  it.dates.splice(i, 1);
   r.q = (r.q || 1) - 1;
   if(r.q <= 0) it.recon = it.recon.filter(x => x.id !== rid);
   syncPendingDates(it);
@@ -8573,6 +8572,31 @@ function gotoRecon(itemId){
    cộng/trừ của ai — chỉ so tồn hiện tại với số đang thiếu, đủ thì tắt cờ, chưa đủ
    thì báo rõ còn thiếu bao nhiêu rồi thôi, giữ đúng nguyên tắc "màn hình này không
    sửa số liệu". Trả lại phần còn thiếu qua alert để người bấm biết cần làm gì tiếp. */
+/* Gỡ MỘT đơn vị date khỏi mã do kho khác đã lấy đi lô đó.
+   Lỗi cũ: chỉ splice date, không trừ SL. Khi người dùng "nhập bổ sung" lô X về (SL +1, date +X)
+   rồi bấm Đồng bộ / Mở để xử lý, lô X thực tế đã đi rồi nên phải trừ cả SL, không thì SL dư 1
+   và hiện "Chưa nhập date" (vd SL 2 mà chỉ còn 1 date).
+   Ngoại lệ: nếu số date đang NHIỀU HƠN SL (date thừa còn sót lại từ lúc SL đã bị trừ rồi) thì
+   chỉ gỡ date, SL đã đúng. Nếu mã còn nợ SL (shortQty) thì trả bớt nợ 1 để settleShortQty
+   không trừ lần nữa. Trả về false nếu mã chưa có date đó. */
+function consumeReconUnit(it, r){
+  if(!it || !r) return false;
+  let key = String(r.d || "").trim().toUpperCase();
+  let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === key);
+  if(i < 0) return false;
+  let excess = (it.dates || []).length > (it.qty || 0);
+  it.dates.splice(i, 1);
+  if(!excess && (it.qty || 0) > 0){
+    it.qty = it.qty - 1;
+    let pr = String(r.pair || "");
+    let t = (db.transactions || []).find(x => x && x.whId === it.whId && x.shortQty > 0
+      && codeKey(x.code) === codeKey(it.code)
+      && (!pr || String(x.autoPair || x.swapPair || "") === pr));
+    if(t) t.shortQty -= 1;
+    if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
+  }
+  return true;
+}
 function autoResolveRecon(itemId, pair){
   let it = db.items.find(i => i.id === itemId);
   if(!it) return { changed: false, missing: [] };
@@ -8581,9 +8605,7 @@ function autoResolveRecon(itemId, pair){
     if(pair && String(r.pair || "") !== pair) return;
     let left = r.q || 1;
     while(left > 0){
-      let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === r.d);
-      if(i < 0) break;
-      it.dates.splice(i, 1);
+      if(!consumeReconUnit(it, r)) break;     // gỡ date + trừ SL (nếu là hàng nhập bổ sung)
       left--; changed = true;
     }
     if(left > 0) missing.push(r.d + (left > 1 ? " x" + left : ""));
@@ -8871,18 +8893,29 @@ function closeSwapCheck(){
 }
 
 /* ===== ĐÈN BÁO: còn giao dịch chưa khớp thì nút Menu + nút Đối chiếu chớp tắt =====
-   CHỈ quản lý (admin) mới thấy — nhân viên không phải người đi dò cả hệ thống,
-   để họ thấy chỉ tổ hoang mang. Đếm gộp cả hai mục Đổi date và Xuất–nhập kho. */
+   Ai thấy: quản lý (admin), người được xem hết các kho, và nhân viên phụ trách kho nào thì
+   thấy phần lệch LIÊN QUAN kho đó (kho mình ghi, hoặc kho đối tác ghi là kho mình).
+   Đếm gộp cả ba mục Đổi date, Xuất–nhập kho, Kho kia thiếu hàng/date. */
+function reconAlertCount(){
+  if(typeof cloudUser === "undefined" || !cloudUser) return 0;
+  let r = computeSwapCheck();
+  let ids = new Set((db.warehouses || []).map(w => w.id));
+  let mine = (cloudUser.warehouses || []).filter(id => ids.has(id));
+  let seesAll = cloudUser.role === "admin" || mine.length === 0 || mine.length >= (db.warehouses || []).length;
+  if(seesAll) return r.total;
+  let mySet = new Set(mine);
+  let myNames = new Set((db.warehouses || []).filter(w => mySet.has(w.id)).map(w => normWhKey(w.name)));
+  let rel = x => mySet.has(x.whId) ||
+    [x.partner, x.from].some(nm => nm && myNames.has(normWhKey(String(nm).trim())));
+  return r.bad.filter(rel).length + r.sendBad.filter(rel).length + r.gaps.filter(rel).length;
+}
 var _reconAlertN = -1;
 function updateReconAlert(){
   let menuBtn = document.getElementById("menuToggleBtn");
   let reconBtn = document.getElementById("menuReconBtn");
   if(!menuBtn && !reconBtn) return;
-  let isAdmin = (typeof cloudUser !== "undefined" && cloudUser && cloudUser.role === "admin");
   let n = 0;
-  if(isAdmin){
-    try{ n = computeSwapCheck().total; }catch(e){ n = 0; }
-  }
+  try{ n = reconAlertCount(); }catch(e){ n = 0; }
   _reconAlertN = n;
   if(menuBtn) menuBtn.classList.toggle("recon-alert", n > 0);
   if(reconBtn){
