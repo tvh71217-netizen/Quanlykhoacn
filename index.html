@@ -8576,24 +8576,26 @@ function gotoRecon(itemId){
    cộng/trừ của ai — chỉ so tồn hiện tại với số đang thiếu, đủ thì tắt cờ, chưa đủ
    thì báo rõ còn thiếu bao nhiêu rồi thôi, giữ đúng nguyên tắc "màn hình này không
    sửa số liệu". Trả lại phần còn thiếu qua alert để người bấm biết cần làm gì tiếp. */
-/* Gỡ MỘT đơn vị date khỏi mã do kho khác đã lấy đi lô đó.
-   Nguyên tắc sổ sách: lúc kho khác lấy hàng, SL của kho này ĐÃ bị trừ đủ — trừ khi tồn không
-   đủ (bị chặn ở 0), phần thiếu được ghi thành "nợ SL" (shortQty trên giao dịch). Vì vậy:
-   - gỡ date chỉ đổi ô date, KHÔNG đụng SL (nhập bổ sung lô về rồi gỡ date thì SL về đúng tồn);
-   - SL chỉ bị trừ thêm để TRẢ NỢ: mỗi đơn vị gỡ trả tối đa 1 đơn vị nợ của đúng chuyến đó,
-     để settleShortQty không trừ lại lần nữa.
-   (Bản trước đoán theo số date nên trừ dư SL khi kho tồn ít hơn số bị lấy.) */
+/* Đối chiếu MỘT đơn vị date mà kho khác đã lấy đi (kho này lúc đó chưa có date ấy).
+   Nguyên tắc: KHÔNG BAO GIỜ xoá date/SL đang có của kho này nếu không có lý do sổ sách.
+   - Lúc kho khác lấy, SL kho này ĐÃ bị trừ đủ; chỉ khi tồn không đủ (bị chặn ở 0) thì phần
+     thiếu mới ghi thành "nợ SL" (shortQty trên giao dịch).
+   - Có nợ SL  -> đây là lô bổ sung đúng phần còn nợ: gỡ ô date đó VÀ trừ 1 SL, trả 1 đơn vị nợ
+     (settleShortQty không trừ lại lần nữa). SL và date đi cùng nhau, không bao giờ lệch.
+   - Không nợ  -> SL đã trừ rồi nên số đang có là hàng thật của kho này: GIỮ NGUYÊN date và SL,
+     chỉ tắt cảnh báo (trước đây gỡ mỗi date làm hiện "?" và SL bị dư).
+   Trả về false nếu kho này vẫn chưa có date đó (chưa đối chiếu được). */
 function consumeReconUnit(it, r){
   if(!it || !r) return false;
   let key = String(r.d || "").trim().toUpperCase();
   let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === key);
   if(i < 0) return false;
-  it.dates.splice(i, 1);
   let pr = String(r.pair || "");
   let t = (db.transactions || []).find(x => x && x.whId === it.whId && x.shortQty > 0
     && codeKey(x.code) === codeKey(it.code)
     && (!pr || String(x.autoPair || x.swapPair || "") === pr));
   if(t && (it.qty || 0) > 0){
+    it.dates.splice(i, 1);
     it.qty = it.qty - 1;
     t.shortQty -= 1;
     if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
@@ -8609,8 +8611,9 @@ function autoSettleReconOnIn(it){
   let res = autoResolveRecon(it.id, "");
   if(!res.changed) return "";
   syncPendingDates(it);
-  return `✅ Đã tự đối chiếu ${before ? "(" + before + ")" : ""}: kho ${whName(it.whId)} đã bị lấy lô này trước đó nên`
-       + ` gỡ date` + ((it.qty || 0) < qty0 ? ` và trừ ${qty0 - (it.qty || 0)} SL` : ``) + ` luôn.`;
+  let paid = qty0 - (it.qty || 0);
+  return `✅ Đã tự đối chiếu ${before ? "(" + before + ")" : ""} cho kho ${whName(it.whId)}: ` +
+         (paid > 0 ? `trừ ${paid} SL và gỡ date tương ứng.` : `giữ nguyên SL và date đang có, chỉ tắt cảnh báo.`);
 }
 function autoResolveRecon(itemId, pair){
   let it = db.items.find(i => i.id === itemId);
