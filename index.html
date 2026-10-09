@@ -4853,12 +4853,16 @@ function processTransaction(){
     db.transactions.push(inTx);
 
     syncPendingDates(item);
+    /* Nhập bổ sung lô mà kho khác ĐÃ lấy đi (đang treo "Cần đối chiếu") -> tự đối chiếu luôn:
+       gỡ date + trả nợ SL ngay lúc nhập, khỏi phải vào Đối chiếu bấm Đồng bộ. */
+    let autoMsg = autoSettleReconOnIn(item);
     let msg = "";
     if(from){
       msg = autoPartner("recv", { whId: whId, partner: from, code: code, brand: item.brand,
         qty: qty, dates: dates.slice(), ts: inTx.ts, pair: inTx.id });
       inTx.autoPair = inTx.id;
     }
+    if(autoMsg) msg = (msg ? msg + "\n" : "") + autoMsg;
     finishTransaction(whId);
     reportAuto(msg);
 
@@ -8595,6 +8599,18 @@ function consumeReconUnit(it, r){
     if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
   }
   return true;
+}
+/* Gọi ngay sau khi NHẬP vào một mã: nếu mã đang treo "Cần đối chiếu" đúng date vừa nhập thì
+   đối chiếu luôn (gỡ date, trả nợ SL qua consumeReconUnit). Trả về câu báo, "" nếu không có gì. */
+function autoSettleReconOnIn(it){
+  if(!it || !Array.isArray(it.recon) || !it.recon.length) return "";
+  let before = reconLabel(it);
+  let qty0 = it.qty || 0;
+  let res = autoResolveRecon(it.id, "");
+  if(!res.changed) return "";
+  syncPendingDates(it);
+  return `✅ Đã tự đối chiếu ${before ? "(" + before + ")" : ""}: kho ${whName(it.whId)} đã bị lấy lô này trước đó nên`
+       + ` gỡ date` + ((it.qty || 0) < qty0 ? ` và trừ ${qty0 - (it.qty || 0)} SL` : ``) + ` luôn.`;
 }
 function autoResolveRecon(itemId, pair){
   let it = db.items.find(i => i.id === itemId);
