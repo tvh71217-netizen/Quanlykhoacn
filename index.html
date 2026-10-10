@@ -3407,12 +3407,26 @@ function toggleNoteScopeOne(whId, checked){
   renderNoteList();  renderTxLog();
 }
 /* ===== Ghi chú tự cất vào lịch sử khi sang ngày mới (giữ 7 ngày gần nhất) ===== */
-function archiveOldNotes(){
+function archiveOldNotes(prevDay){
   if(!Array.isArray(db.noteHistory)) db.noteHistory = [];
   let today = localDateStrOffset(0);
   let changed = false;
 
   db.warehouses.forEach(w => {
+    // Dấu ✅/❌ của ngày cũ: cất vào lịch sử đúng ngày đó rồi trả hôm nay về ❌.
+    // (Trước đây hàm return sớm khi ghi chú trống nên dấu ✅ cũ kẹt lại sang ngày mới
+    //  => ngày mới tự hiện ✅, còn ngày cũ bị xoá trên máy chủ => máy khác mất dấu.)
+    if(w.confirm){
+      let cday = w.confirmDay || prevDay || null;
+      if(cday && cday !== today){
+        let exc = db.noteHistory.find(n => n.whId === w.id && n.date === cday);
+        if(exc) exc.confirm = w.confirm;
+        else db.noteHistory.push({ id: uid(), whId: w.id, date: cday, note: "", ts: null, confirm: w.confirm });
+        w.confirm = null;
+        w.confirmDay = null;
+        changed = true;
+      }
+    }
     if(!w.note || !w.note.trim()) return;
     let day = w.noteAt ? tsToLocalDateStr(w.noteAt) : today;
     if(day === today) return;              // ghi chú của hôm nay thì giữ nguyên
@@ -3550,6 +3564,7 @@ function setDayConfirm(whId, dateStr, status){
     let w = db.warehouses.find(x => x.id === whId);
     if(!w) return;
     w.confirm = status || null;
+    w.confirmDay = status ? today : null;
   } else {
     if(!Array.isArray(db.noteHistory)) db.noteHistory = [];
     let ex = db.noteHistory.find(n => n.whId === whId && n.date === dateStr);
@@ -7844,9 +7859,10 @@ function checkDayRollover(){
   let today = localDateStrOffset(0);
   if(currentDayStr === null){ currentDayStr = today; return; }
   if(today === currentDayStr) return;
+  let prevDay = currentDayStr;
   currentDayStr = today;
   purgeOldTransactions();
-  archiveOldNotes();
+  archiveOldNotes(prevDay);
   let el = document.getElementById("histDate");
   if(el) el.value = today;                // quay về xem ngày mới ở cả 2 mục
   let anchor = anchorScrollSnapshot(document.getElementById("noteList"));
@@ -9496,6 +9512,7 @@ function applyConfirmLive(){
     var remC = n ? (n.confirm || null) : null;
     if(remC === shC || locC !== shC) return;
     w.confirm = remC;
+    w.confirmDay = remC ? today : null;
     if(sh){
       sh.confirm = remC;
       if(!remC && !(sh.note && String(sh.note).trim())) delete _shadow.notes[k];
@@ -9556,7 +9573,8 @@ function applyCloud(){
   db.warehouses = whs.map(function(w){
     var n = nts.find(function(x){ return x.whId === w.id && x.date === today; });
     return { id:w.id, name:w.name, order:w.order, note:(n && n.note) || "", noteAt:(n && n.ts) || null,
-             confirm:(n && n.confirm) || null };
+             confirm:(n && n.confirm) || null,
+             confirmDay:(n && n.confirm) ? today : null };
   });
   db.items = its.map(function(o){
     return { id:o.id, whId:o.whId, brand:o.brand, code:o.code, qty:o.qty,
