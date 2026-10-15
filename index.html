@@ -592,7 +592,7 @@ body.kb-open{padding-bottom:340px;}
     <div class="card">
       <h3>Tìm kiếm</h3>
       <div class="row">
-        <input type="text" id="searchInput" placeholder="Mã, Date, Kho — VD: vt 65b24l, d, bình thạnh" oninput="renderSearch()" style="flex:1;">
+        <input type="text" id="searchInput" placeholder="Mã, Date, Kho — VD: vt 65b24l, d, bình thạnh" oninput="scheduleSearch()" style="flex:1;">
       </div>
       <div style="margin:6px 0 0;"><span class="guide-link" data-guide="gSearch" onclick="toggleGuide('gSearch', this)">📖 Hướng dẫn sử dụng</span></div>
       <div class="guide-box" id="gSearch">
@@ -3971,8 +3971,27 @@ function focusFirstEmptySearchDate(itemId){
   if(first){ first.focus(); ensureVisibleMinimal(first); }
 }
 
-function renderSearch(){
-  refreshSearchScope();
+/* Gõ ở ô tìm kiếm: đợi ngừng gõ ~160ms mới vẽ, đỡ vẽ chồng lên nhau mỗi phím */
+let _searchTimer = null;
+function scheduleSearch(){
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function(){ renderSearch(true); }, 160);
+}
+/* Chuẩn hoá mã/ghi chú MỘT lần cho mỗi mã (bỏ dấu rất tốn nếu làm lại mỗi phím) */
+let _itemNormCache = new WeakMap();
+function itemNorm(it){
+  let key = String(it.code || "") + "\u0001" + String(it.notes || "");
+  let c = _itemNormCache.get(it);
+  if(c && c.k === key) return c;
+  c = { k: key, code: String(it.code || "").toLowerCase(), notes: String(it.notes || "").toLowerCase(),
+        codeN: normVN(it.code), notesN: normVN(it.notes || "") };
+  _itemNormCache.set(it, c);
+  return c;
+}
+let _searchPaintToken = 0;
+
+function renderSearch(typing){
+  if(typing !== true) refreshSearchScope();   // đang gõ thì không cần dựng lại thanh chọn kho
   applyResets();
   ensureSearchScopeInit();
   let rawQ = document.getElementById("searchInput").value.trim();
@@ -3985,17 +4004,17 @@ function renderSearch(){
     let qn = normVN(q);
     // Từ khoá trạng thái chỉ tính khi gõ từ 3 ký tự trở lên, tránh 1-2 chữ khớp bừa
     let useStatus = qn.length >= 3;
-    results = results.filter(it =>
-      it.code.toLowerCase().includes(q) ||
-      (it.notes || "").toLowerCase().includes(q) ||
-      normVN(it.code).includes(qn) ||
-      normVN(it.notes || "").includes(qn) ||
-      (useStatus && itemStatusKeywords(it).includes(qn))
-    );
+    results = results.filter(it => {
+      let n = itemNorm(it);
+      return n.code.includes(q) || n.notes.includes(q) ||
+             n.codeN.includes(qn) || n.notesN.includes(qn) ||
+             (useStatus && itemStatusKeywords(it).includes(qn));
+    });
   }
 
   scheduleTxFind();
   let out = document.getElementById("searchResults");
+  _searchPaintToken++;                       // huỷ lượt vẽ dần cũ (nếu còn)
   if(results.length === 0){
     out.innerHTML = `<div class="empty">Không tìm thấy kết quả.</div>`;
     return;
@@ -4013,9 +4032,7 @@ function renderSearch(){
   let notesHeader = notesVisible ? `<th>Ghi chú</th>` : "";
   let colspan = notesVisible ? 5 : 4;
 
-  let bodyHtml = whOrder.map(whId => {
-    let wh = db.warehouses.find(w => w.id === whId);
-    let itemRows = groups[whId].map(it => {
+  let rowFor = function(it){
       let missDate = itemMissingDates(it);
       let status = reconCount(it) > 0
                    ? `<span class="badge badge-danger" style="cursor:pointer;" onclick="openRecon('${it.id}')" title="Kho khác đã lấy date mà kho mình chưa có — bấm để xử lý">⚠ Cần đối chiếu (${escapeHtml(reconLabel(it))})</span>`
@@ -4034,11 +4051,34 @@ function renderSearch(){
               onchange="updateItemQtyFrom('${it.id}', this.value, 'search')"
               onkeydown="if(isEnterKey(event)){event.preventDefault(); this.onchange();}">`;
       return `<tr><td style="font-weight:700;font-size:16px;">${escapeHtml(it.code)}</td><td>${qtyCell}</td><td>${dates}</td><td>${status}</td>${notesCell}</tr>`;
-    }).join("");
-    return `<tr class="brand-row"><td colspan="${colspan}">🏬 ${escapeHtml(wh ? wh.name : "?")}</td></tr>${itemRows}`;
-  }).join("");
+  };
 
-  out.innerHTML = `<table><thead><tr><th>Mã bình</th><th>SL</th><th>Date</th><th>Trạng thái</th>${notesHeader}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+  // Danh sách "việc vẽ": dòng tên kho + từng mã. Vẽ 30 dòng đầu ngay, phần còn lại vẽ dần.
+  let queue = [];
+  whOrder.forEach(whId => {
+    let wh = db.warehouses.find(w => w.id === whId);
+    queue.push({ h: `<tr class="brand-row"><td colspan="${colspan}">🏬 ${escapeHtml(wh ? wh.name : "?")}</td></tr>` });
+    groups[whId].forEach(it => queue.push({ it: it }));
+  });
+  let build = function(from, to){
+    let h = "";
+    for(let k = from; k < to && k < queue.length; k++){
+      h += queue[k].h !== undefined ? queue[k].h : rowFor(queue[k].it);
+    }
+    return h;
+  };
+  let FIRST = 30, CHUNK = 60;
+  out.innerHTML = `<table><thead><tr><th>Mã bình</th><th>SL</th><th>Date</th><th>Trạng thái</th>${notesHeader}</tr></thead><tbody id="searchBody">${build(0, FIRST)}</tbody></table>`;
+  if(queue.length <= FIRST) return;
+  let token = _searchPaintToken, pos = FIRST;
+  (function step(){
+    if(token !== _searchPaintToken) return;
+    let body = document.getElementById("searchBody");
+    if(!body) return;
+    body.insertAdjacentHTML("beforeend", build(pos, pos + CHUNK));
+    pos += CHUNK;
+    if(pos < queue.length) requestAnimationFrame(step);
+  })();
 }
 
 /* ===================================================================
@@ -4152,15 +4192,34 @@ function txFindSetType(k){
    triệt tiêu vì luôn có 1 dòng out + 1 dòng in cùng SL. Mã đã bị xoá thì bỏ qua
    (không tính được tồn kho vì không còn SL hiện tại làm mốc). */
 let _txStockCache = {};
+/* Chỉ mục giao dịch + mã theo "kho|mã": dựng MỘT lần rồi tra, thay vì quét cả nghìn giao dịch cho từng dòng */
+let _txGroupIdx = null;
+function txGroupIndex(){
+  let txs = db.transactions || [], its = db.items || [];
+  let g = _txGroupIdx;
+  if(g && g.txRef === txs && g.n === txs.length && g.itRef === its && g.m === its.length) return g;
+  g = { txRef: txs, n: txs.length, itRef: its, m: its.length, tx: new Map(), items: new Map() };
+  txs.forEach(t => {
+    let k = t.whId + "|" + codeKey(t.code);
+    let arr = g.tx.get(k);
+    if(arr) arr.push(t); else g.tx.set(k, [t]);
+  });
+  its.forEach(i => {
+    let k = i.whId + "|" + codeKey(i.code);
+    if(!g.items.has(k)) g.items.set(k, i);
+  });
+  _txGroupIdx = g;
+  return g;
+}
 function txStockAfterMap(whId, code){
   let key = whId + "|" + codeKey(code);
   if(_txStockCache[key]) return _txStockCache[key];
-  let it = db.items.find(i => i.whId === whId && codeKey(i.code) === codeKey(code));
+  let g = txGroupIndex();
+  let it = g.items.get(key);
   let map = {};
   if(it && it.qty !== null && it.qty !== undefined){
-    let list = (db.transactions || [])
-      .filter(t => t.whId === whId && codeKey(t.code) === codeKey(code))
-      .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+    let list = (g.tx.get(key) || []).slice()
+      .sort((a, b) => txMeta(b).tsn - txMeta(a).tsn);
     let running = it.qty;
     list.forEach(t => {
       map[t.id] = running;
@@ -4180,9 +4239,19 @@ function txWhoName(t){
   return t.byName || t.autoUser || "";
 }
 
+/* Cache theo từng giao dịch: ngày, mã đã bỏ dấu, mốc thời gian dạng số */
+let _txMetaCache = new WeakMap();
+function txMeta(t){
+  let m = _txMetaCache.get(t);
+  if(m && m.ts === t.ts && m.code === t.code) return m;
+  m = { ts: t.ts, code: t.code, day: tsToLocalDateStr(t.ts), codeN: normVN(t.code || ""),
+        tsn: new Date(t.ts).getTime() || 0 };
+  _txMetaCache.set(t, m);
+  return m;
+}
 function scheduleTxFind(){
   clearTimeout(_txFindTimer);
-  _txFindTimer = setTimeout(renderTxFind, 250);   // đợi gõ xong mới lọc, đỡ giật máy
+  _txFindTimer = setTimeout(renderTxFind, 350);   // đợi gõ xong mới lọc, đỡ giật máy
 }
 
 function renderTxFind(){
@@ -4228,15 +4297,15 @@ function renderTxFind(){
 
   let codeN = normVN(q.code);
   let list = (db.transactions || []).filter(t => {
-    let day = tsToLocalDateStr(t.ts);
-    if(r.from && day < r.from) return false;
-    if(r.to   && day > r.to)   return false;
+    let m = txMeta(t);                     // ngày / mã đã chuẩn hoá: tính một lần cho mỗi giao dịch
+    if(r.from && m.day < r.from) return false;
+    if(r.to   && m.day > r.to)   return false;
     if(q.whId && t.whId !== q.whId) return false;
-    if(codeN && !normVN(t.code || "").includes(codeN)) return false;
+    if(codeN && !m.codeN.includes(codeN)) return false;
     if(q.date && !(t.dates || []).some(d => normDateKey(d) === q.date)) return false;
     if(txFindType !== "all" && txKindOf(t) !== txFindType) return false;
     return true;
-  }).sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  }).sort((a, b) => txMeta(b).tsn - txMeta(a).tsn);
 
   if(!list.length){
     let goi = q.date ? ` Thử bỏ phần <b>date ${escapeHtml(q.date)}</b> xem sao.`
