@@ -614,7 +614,7 @@ body.kb-open{padding-bottom:340px;}
           <li><b>all, d, bình thạnh</b> — mọi mã có date D ở kho Bình Thạnh</li>
           <li>Phần nào không cần lọc thì ghi <b>all</b> hoặc bỏ trống: <i>vt 65b24l, , bình thạnh</i></li>
           <li>Kết quả nằm ở khung <b>📜 Lịch sử liên quan</b> ngay dưới bảng, có ghi <b>ai thực hiện</b>.</li>
-          <li>Chọn <b>khoảng ngày</b> bằng hai ô Từ – Đến, hoặc bấm nhanh <b>7 / 30 / 90 ngày / Tất cả</b>. Mặc định là 30 ngày.</li>
+          <li>Chọn <b>khoảng ngày</b> bằng hai ô Từ – Đến, hoặc bấm nhanh <b>7 / 30 ngày</b>. Chỉ xem lại được 30 ngày gần nhất.</li>
           <li>Lọc riêng <b>Nhập</b>, <b>Xuất</b> hay <b>Đổi date</b> bằng hàng nút ngay trên kết quả.</li>
           <li>Dòng <b>Đang hiểu:</b> cho biết app đang lọc theo cái gì — sai chỗ nào sửa chỗ đó.</li>
         </ul>
@@ -4203,7 +4203,7 @@ function renderTxFind(){
   }
   // Nút chọn nhanh + lọc loại (nằm trong 2 thanh gập)
   let quick = document.getElementById("txFindQuick");
-  if(quick) quick.innerHTML = [[7,"7 ngày"],[30,"30 ngày"],[90,"90 ngày"],[0,"Tất cả"]]
+  if(quick) quick.innerHTML = [[7,"7 ngày"],[30,"30 ngày"]]
     .map(x => `<button class="ghost" style="flex:1;min-width:70px;padding:7px 8px;font-size:12px;" onclick="txFindSetDays(${x[0]})">${x[1]}</button>`).join("");
   let bar = document.getElementById("txFindTypeBar");
   if(bar) bar.innerHTML = [["all","Tất cả"],["in","⬇ Nhập"],["out","⬆ Xuất"],["swap","⇄ Đổi date"]]
@@ -9600,6 +9600,7 @@ function applyCloud(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }catch(e){}
   if(_needBoot){ _needBoot = false; bootAfterLogin(); }
   else renderAll();
+  setTimeout(cloudPurgeOld, 4000);     // dọn dữ liệu quá hạn trên mạng (mỗi ngày 1 lần)
 }
 
 function backupLocal(){
@@ -9674,6 +9675,58 @@ function commitInChunks(ops){
     })(ops.slice(i, i + CH));
   }
   return chain;
+}
+
+/* ===== DỌN DỮ LIỆU CŨ TRÊN MẠNG (chỉ quản lý, mỗi ngày tối đa 1 lần) =====
+   Xoá HẲN khỏi Firestore: giao dịch, ghi chú, nhật ký thao tác quá TX_KEEP_DAYS ngày.
+   KHÔNG đụng tới mã (items): SL, date đang có giữ nguyên 100%.
+   Giao dịch còn "nợ" đối chiếu (shortQty > 0 hoặc partnerNew) thì giữ lại dù cũ,
+   vì bấm Đồng bộ ở màn Đối chiếu còn cần nó để trừ SL cho đúng. */
+function deleteDocsInChunks(refs){
+  var CH = 400, chain = Promise.resolve();
+  for(var i = 0; i < refs.length; i += CH){
+    (function(part){
+      chain = chain.then(function(){
+        var b = fbDb.batch();
+        part.forEach(function(r){ b.delete(r); });
+        return b.commit();
+      });
+    })(refs.slice(i, i + CH));
+  }
+  return chain;
+}
+function purgeAuditOld(limit, guard){
+  if(guard > 50) return Promise.resolve();
+  return fbDb.collection("audit").where("day", "<", limit).limit(400).get().then(function(snap){
+    if(snap.empty) return;
+    var b = fbDb.batch();
+    snap.docs.forEach(function(d){ b.delete(d.ref); });
+    return b.commit().then(function(){ return purgeAuditOld(limit, guard + 1); });
+  });
+}
+function cloudPurgeOld(){
+  if(!CLOUD_ON || !fbDb || !cloudUser || cloudUser.role !== "admin") return;
+  if(!_incoming.transactions || !_incoming.notes) return;
+  var today = localDateStrOffset(0);
+  try{ if(localStorage.getItem("qlk_last_purge") === today) return; }catch(e){}
+  var limit = oldestKeptDate();          // ngày cũ nhất còn giữ (tính cả hôm nay)
+  var refs = [];
+  _incoming.transactions.forEach(function(t){
+    if(!t || !t.id) return;
+    if(!t.deleted && ((t.shortQty || 0) > 0 || t.partnerNew)) return;   // còn nợ đối chiếu -> giữ
+    var d = tsToLocalDateStr(t.ts || t.at);
+    if(d && d < limit) refs.push(fbDb.collection("transactions").doc(t.id));
+  });
+  _incoming.notes.forEach(function(n){
+    if(!n || !n.id) return;
+    var d = n.date || "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < limit) refs.push(fbDb.collection("notes").doc(n.id));
+  });
+  deleteDocsInChunks(refs).then(function(){
+    try{ localStorage.setItem("qlk_last_purge", today); }catch(e){}
+    // Nhật ký thao tác: nếu Rules chưa cho xoá thì bỏ qua, không báo lỗi
+    return purgeAuditOld(limit, 0).catch(function(){});
+  }).catch(function(){ /* lần sau thử lại */ });
 }
 
 /* ===== Nhật ký Kho: đổi date thì ghi rõ TỪ ĐÂU SANG ĐÂU =====
