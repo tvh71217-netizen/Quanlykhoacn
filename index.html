@@ -9773,11 +9773,21 @@ function purgeAuditOld(limit, guard){
     return b.commit().then(function(){ return purgeAuditOld(limit, guard + 1); });
   });
 }
+var _purgeBusy = false;
 function cloudPurgeOld(){
   if(!CLOUD_ON || !fbDb || !cloudUser || cloudUser.role !== "admin") return;
   if(!_incoming.transactions || !_incoming.notes) return;
+  if(_purgeBusy) return;                 // đang dọn dở thì không chạy chồng
   var today = localDateStrOffset(0);
-  try{ if(localStorage.getItem("qlk_last_purge") === today) return; }catch(e){}
+  try{
+    if(localStorage.getItem("qlk_last_purge") === today) return;
+    /* Lần trước lỗi (VD Rules chưa cho xoá) thì nghỉ 30 phút mới thử lại — nếu không,
+       mỗi lần máy chủ báo dữ liệu mới lại thử xoá, bị từ chối, rồi lại thử -> chip cứ nháy "chưa đồng bộ" */
+    var lastTry = parseInt(localStorage.getItem("qlk_purge_try") || "0", 10) || 0;
+    if(Date.now() - lastTry < 30 * 60 * 1000) return;
+    localStorage.setItem("qlk_purge_try", String(Date.now()));
+  }catch(e){}
+  _purgeBusy = true;
   var limit = oldestKeptDate();          // ngày cũ nhất còn giữ (tính cả hôm nay)
   var refs = [];
   _incoming.transactions.forEach(function(t){
@@ -9795,7 +9805,9 @@ function cloudPurgeOld(){
     try{ localStorage.setItem("qlk_last_purge", today); }catch(e){}
     // Nhật ký thao tác: nếu Rules chưa cho xoá thì bỏ qua, không báo lỗi
     return purgeAuditOld(limit, 0).catch(function(){});
-  }).catch(function(){ /* lần sau thử lại */ });
+  }).catch(function(e){
+    console.warn("Dọn dữ liệu cũ chưa được:", e && e.code || e);   // thử lại sau 30 phút
+  }).then(function(){ _purgeBusy = false; });
 }
 
 /* ===== Nhật ký Kho: đổi date thì ghi rõ TỪ ĐÂU SANG ĐÂU =====
