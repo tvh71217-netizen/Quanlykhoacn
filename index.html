@@ -524,7 +524,7 @@ body.kb-open{padding-bottom:340px;}
   <h1>📦 Quản Lý Kho</h1>
   <div class="user-bar" id="userBar" style="display:none;">
     <span class="user-chip" id="userChip">—</span>
-    <span class="sync-chip" id="syncChip">Đang kết nối…</span>
+    <span class="sync-chip" id="syncChip" onclick="showSyncInfo()" style="cursor:pointer;">Đang kết nối…</span>
     <button type="button" class="logout-link" onclick="cloudSignOut()">Đăng xuất</button>
   </div>
   <div class="sub help-note">Dữ liệu tự lưu vào máy này. Dùng nút Xuất/Nhập JSON để mang sang thiết bị khác.</div>
@@ -9480,8 +9480,37 @@ function setSync(state, text){
   var bar = document.getElementById("userBar");
   document.body.classList.toggle("unsynced", state === "wait" && !!bar && bar.style.display !== "none");
 }
+var APP_BUILD = "2026-10-16-c", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+/* Chip đồng bộ: ghi bình thường được máy chủ xác nhận trong chưa tới 1 giây, nên chỉ báo đỏ
+   khi việc chờ kéo dài quá 2,5 giây (mất mạng / bị từ chối) — không chớp đỏ sau mỗi thao tác.
+   Đang dọn dữ liệu cũ (quản lý) thì hiện chữ riêng, không báo đỏ. */
+function refreshSyncChip(){
+  var anyPend = Object.keys(_pend).some(function(k){ return _pend[k]; });
+  clearTimeout(_waitTimer);
+  if(!anyPend){ setSync("ok", "☁ đã đồng bộ"); return; }
+  if(_purgeBusy && !_syncTimer){ setSync("ok", "🧹 đang dọn dữ liệu cũ…"); return; }
+  _waitTimer = setTimeout(function(){
+    if(Object.keys(_pend).some(function(k){ return _pend[k]; })) setSync("wait", "⏳ chưa đồng bộ");
+  }, 2500);
+}
+function showSyncInfo(){
+  var today = localDateStrOffset(0), okDay = "";
+  try{ okDay = localStorage.getItem("qlk_last_purge") || ""; }catch(e){}
+  var wait = Object.keys(_pend).filter(function(k){ return _pend[k]; });
+  var lines = [
+    "Bản app: " + APP_BUILD,
+    "Mạng: " + (navigator.onLine ? "có" : "MẤT"),
+    "Vai trò: " + ((cloudUser && cloudUser.role) || "?"),
+    "Thay đổi chưa kịp gửi ở máy này: " + (_syncTimer ? "có" : "không"),
+    "Đang chờ máy chủ xác nhận: " + (wait.length ? wait.join(", ") : "không"),
+    "Dọn dữ liệu cũ: " + (_purgeBusy ? "đang chạy" : (okDay === today ? "đã xong hôm nay" : "chưa xong"))
+  ];
+  if(_lastCloudErr) lines.push("Lỗi gần nhất: " + _lastCloudErr);
+  alert(lines.join("\n"));
+}
 function cloudError(e){
   console.error("Lỗi đồng bộ:", e);
+  _lastCloudErr = String((e && e.code) || e || "?") + " lúc " + new Date().toLocaleTimeString("vi-VN");
   setSync("wait", "⏳ chưa đồng bộ");
   var m = String(e && e.code || e || "");
   if(/permission-denied/.test(m) && !_cloudErrShown){
@@ -9552,8 +9581,8 @@ function startCloudListeners(){
       _incoming[c] = snap.docs.map(function(d){
         var o = d.data() || {}; o.id = d.id; return o;
       });
-      setSync(snap.metadata.hasPendingWrites ? "wait" : "ok",
-              snap.metadata.hasPendingWrites ? "⏳ chưa đồng bộ" : "☁ đã đồng bộ");
+      _pend[c] = !!snap.metadata.hasPendingWrites;
+      refreshSyncChip();
       applyCloudSoon();
     }, cloudError);
   });
@@ -9807,7 +9836,8 @@ function cloudPurgeOld(){
     return purgeAuditOld(limit, 0).catch(function(){});
   }).catch(function(e){
     console.warn("Dọn dữ liệu cũ chưa được:", e && e.code || e);   // thử lại sau 30 phút
-  }).then(function(){ _purgeBusy = false; });
+    _lastCloudErr = "dọn dữ liệu cũ: " + String((e && e.code) || e || "?") + " lúc " + new Date().toLocaleTimeString("vi-VN");
+  }).then(function(){ _purgeBusy = false; refreshSyncChip(); });
 }
 
 /* ===== Nhật ký Kho: đổi date thì ghi rõ TỪ ĐÂU SANG ĐÂU =====
