@@ -9480,7 +9480,7 @@ function setSync(state, text){
   var bar = document.getElementById("userBar");
   document.body.classList.toggle("unsynced", state === "wait" && !!bar && bar.style.display !== "none");
 }
-var APP_BUILD = "2026-10-16-c", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+var APP_BUILD = "2026-10-16-e", _lastCloudErr = "", _pend = {}, _waitTimer = null;
 /* Chip đồng bộ: ghi bình thường được máy chủ xác nhận trong chưa tới 1 giây, nên chỉ báo đỏ
    khi việc chờ kéo dài quá 2,5 giây (mất mạng / bị từ chối) — không chớp đỏ sau mỗi thao tác.
    Đang dọn dữ liệu cũ (quản lý) thì hiện chữ riêng, không báo đỏ. */
@@ -9506,6 +9506,24 @@ function showSyncInfo(){
     "Dọn dữ liệu cũ: " + (_purgeBusy ? "đang chạy" : (okDay === today ? "đã xong hôm nay" : "chưa xong"))
   ];
   if(_lastCloudErr) lines.push("Lỗi gần nhất: " + _lastCloudErr);
+  // Số lượng dữ liệu đang có (lấy từ phần đã tải về, không tốn thêm lượt đọc)
+  try{
+    var lim = oldestKeptDate(), txs = _incoming.transactions || [], nts = _incoming.notes || [];
+    var txOld = 0, txKeep = 0, ntOld = 0;
+    txs.forEach(function(t){
+      var d = tsToLocalDateStr(t.ts || t.at);
+      if(d && d < lim){
+        if(!t.deleted && ((t.shortQty || 0) > 0 || t.partnerNew)) txKeep++; else txOld++;
+      }
+    });
+    nts.forEach(function(n){ if(/^\d{4}-\d{2}-\d{2}$/.test(n.date || "") && n.date < lim) ntOld++; });
+    var cho = txOld + ntOld;
+    lines.push("— Dữ liệu trên mạng —");
+    lines.push("Giao dịch: " + txs.length + " (quá 30 ngày cần dọn: " + txOld + ", giữ vì còn nợ đối chiếu: " + txKeep + ")");
+    lines.push("Ghi chú: " + nts.length + " (quá 30 ngày: " + ntOld + ")");
+    lines.push("Mã: " + (_incoming.items || []).length);
+    lines.push(cho ? "Còn khoảng " + Math.ceil(cho / PURGE_MAX_PER_DAY) + " ngày dọn nữa (mỗi ngày tối đa " + PURGE_MAX_PER_DAY + " dòng)" : "Không còn gì quá hạn để dọn");
+  }catch(e){}
   alert(lines.join("\n"));
 }
 function cloudError(e){
@@ -9802,7 +9820,7 @@ function purgeAuditOld(limit, guard){
     return b.commit().then(function(){ return purgeAuditOld(limit, guard + 1); });
   });
 }
-var _purgeBusy = false;
+var _purgeBusy = false, PURGE_MAX_PER_DAY = 5000;
 function cloudPurgeOld(){
   if(!CLOUD_ON || !fbDb || !cloudUser || cloudUser.role !== "admin") return;
   if(!_incoming.transactions || !_incoming.notes) return;
@@ -9830,10 +9848,13 @@ function cloudPurgeOld(){
     var d = n.date || "";
     if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < limit) refs.push(fbDb.collection("notes").doc(n.id));
   });
+  /* Firestore gói miễn phí chỉ cho 20.000 lượt xoá/ngày (và 20.000 ghi, 50.000 đọc). Mỗi ngày chỉ xoá
+     tối đa PURGE_MAX_PER_DAY dòng, phần còn lại để các ngày sau, chừa quota cho việc nhập/xuất. */
+  if(refs.length > PURGE_MAX_PER_DAY) refs = refs.slice(0, PURGE_MAX_PER_DAY);
   deleteDocsInChunks(refs).then(function(){
     try{ localStorage.setItem("qlk_last_purge", today); }catch(e){}
     // Nhật ký thao tác: nếu Rules chưa cho xoá thì bỏ qua, không báo lỗi
-    return purgeAuditOld(limit, 0).catch(function(){});
+    return purgeAuditOld(limit, 46).catch(function(){});   // tối đa 5 lượt x 400 dòng nhật ký / ngày
   }).catch(function(e){
     console.warn("Dọn dữ liệu cũ chưa được:", e && e.code || e);   // thử lại sau 30 phút
     _lastCloudErr = "dọn dữ liệu cũ: " + String((e && e.code) || e || "?") + " lúc " + new Date().toLocaleTimeString("vi-VN");
