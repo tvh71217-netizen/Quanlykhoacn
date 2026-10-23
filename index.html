@@ -5468,7 +5468,7 @@ function openRecon(itemId){
   let it = db.items.find(i => i.id === itemId);
   if(!it || !((it.recon || []).length)) return;
   /* Toàn bộ là SL/date "cộng tạm" -> bấm vào cảnh báo là trừ luôn (hỏi xác nhận 1 lần) */
-  if(canWriteWh(it.whId) && it.recon.every(r => r.v && (it.dates || []).some(x => String(x || "").trim().toUpperCase() === String(r.d || "").trim().toUpperCase()))){
+  if(canWriteWh(it.whId) && it.recon.every(r => r.v && (it.dates || []).filter(x => String(x || "").trim().toUpperCase() === String(r.d || "").trim().toUpperCase()).length >= 2)){
     askConfirm(`Đối chiếu mã ${it.code} — kho ${whName(it.whId)}:\nTrừ ${reconLabel(it)} (SL và date) đã cộng tạm vì kho khác lấy lô này?`,
       function(){
         autoResolveRecon(it.id, "");
@@ -5518,7 +5518,8 @@ function reconPull(rid){
   if(!r) return;
   /* Gỡ date VÀ trừ SL cùng lúc (consumeReconUnit) — trước đây chỉ gỡ date nên SL bị dư 1 */
   if(!consumeReconUnit(it, r)){
-    alert(`Kho này vẫn chưa có date ${r.d} — nhập bổ sung lô đó vào trước đã.`);
+    alert(r.v ? `Chưa đồng bộ được: kho này chưa nhập bổ sung ${it.code} date ${r.d}.\nHãy nhập ${it.code} date ${r.d} vào kho này trước, rồi bấm đồng bộ lại.`
+              : `Kho này vẫn chưa có date ${r.d} — nhập bổ sung lô đó vào trước đã.`);
     return;
   }
   r.q = (r.q || 1) - 1;
@@ -8805,10 +8806,23 @@ function consumeReconUnit(it, r){
   let i = (it.dates || []).findIndex(x => String(x || "").trim().toUpperCase() === key);
   if(i < 0) return false;
   /* Dòng "cộng tạm" (r.v): SL + date này do app tự cộng vào lúc kho khác lấy hàng -> bấm đối chiếu
-     là trừ lại đúng 1 SL + 1 date đó. */
+     là trừ lại 1 SL + 1 date đó (và thêm 1 nữa nếu đã nhập bổ sung cùng date, xem bên dưới). */
   if(r.v){
-    it.dates.splice(i, 1);
-    it.qty = Math.max(0, (it.qty || 0) - 1);
+    /* Đã nhập bổ sung đúng date đó về (kho này đang có >= 2 ô cùng date): hàng thật đã bị kho khác
+       lấy đi nên trừ luôn CẢ phần cộng tạm LẪN phần vừa nhập bổ sung = 2 SL + 2 date cùng date.
+       Chưa nhập bổ sung (chỉ có 1 ô date) thì chỉ trừ phần cộng tạm = 1. */
+    /* CHƯA nhập bổ sung (chỉ có 1 ô date = phần cộng tạm) -> CHẶN, chưa cho đồng bộ: nếu trừ sớm thì
+       lúc nhân viên nhập date đó về sẽ bị dư 1 SL. Phải nhập date đó vào kho này trước. */
+    let have = it.dates.filter(x => String(x || "").trim().toUpperCase() === key).length;
+    if(have < 2) return false;
+    let removed = 0;
+    for(let n = 0; n < 2; n++){
+      let j = it.dates.findIndex(x => String(x || "").trim().toUpperCase() === key);
+      if(j < 0) break;
+      it.dates.splice(j, 1);
+      removed++;
+    }
+    it.qty = Math.max(0, (it.qty || 0) - removed);
     if(it.qty <= 0){ it.qty = 0; it.dates = []; it.zeroSince = new Date().toISOString(); }
     return true;
   }
@@ -8835,7 +8849,7 @@ function autoResolveRecon(itemId, pair){
       if(!consumeReconUnit(it, r)) break;     // gỡ date + trừ SL (nếu là hàng nhập bổ sung)
       left--; changed = true;
     }
-    if(left > 0) missing.push(r.d + (left > 1 ? " x" + left : ""));
+    if(left > 0) missing.push(r.d + (left > 1 ? " x" + left : "") + (r.v ? " (chưa nhập bổ sung vào kho này)" : ""));
     r.q = left;
   });
   it.recon = it.recon.filter(r => (r.q || 0) > 0);
