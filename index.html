@@ -245,6 +245,18 @@
   .note-cmp{border:1px solid var(--line);border-left:3px solid var(--brand);border-radius:6px;background:#fbfaf5;padding:8px 10px;margin-bottom:6px;}
   .note-cmp-head{font-size:12px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .note-cmp-head b{color:var(--ink);font-size:13px;}
+  .hc-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .hc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;}
+  .hc-dow span{font-size:12px;font-weight:700;color:var(--muted);padding:4px 0;}
+  .hc-day{padding:9px 0;border-radius:50%;font-size:16px;font-weight:600;cursor:pointer;user-select:none;border:2px solid transparent;color:var(--ink);}
+  .hc-day.off{color:#c9c9c0;cursor:default;font-weight:400;}
+  .hc-day.red{color:var(--danger);font-weight:800;}
+  .hc-day.today{border-color:var(--brand);}
+  .hc-day.sel{background:var(--brand);color:#fff;}
+  .hc-day.sel.red{background:var(--danger);color:#fff;}
+  .hc-legend{font-size:12px;color:var(--muted);margin-top:8px;}
+  .hc-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;}
+  .hc-dot.red{background:var(--danger);} .hc-dot.sel{background:var(--brand);}
   .day-confirm-tick{font-size:19px;line-height:1;cursor:pointer;padding:2px 3px;border-radius:5px;user-select:none;}
   .day-confirm-tick:active{background:#0001;}
   /* Nhập / Xuất nằm song song nhau ngay phía dưới dòng ngày */
@@ -713,7 +725,7 @@ body.kb-open{padding-bottom:340px;}
     <div class="card">
       <div class="note-hist-bar" style="margin:0;">
         <span style="font-size:13px;font-weight:600;">📅 Ngày xem lịch sử:</span>
-        <input type="date" id="histDate" onchange="onHistDateChange()">
+        <input type="hidden" id="histDate"><button type="button" class="ghost" id="histDateBtn" onclick="openHistCal()" style="font-weight:700;">📅 —</button>
         <button class="ghost" onclick="histGoToday()">Hôm nay</button>
       </div>
       <div style="margin-top:6px;"><span class="guide-link" data-guide="gDate" onclick="toggleGuide('gDate', this)">📖 Hướng dẫn sử dụng</span></div>
@@ -813,6 +825,22 @@ body.kb-open{padding-bottom:340px;}
 </div>
 
 <!-- Modal ô tick "đã nhập dữ liệu kho" trên khung 📊 Tổng kết -->
+<div class="modal-overlay" id="histCalModal">
+  <div class="modal-box" style="max-width:360px;">
+    <div class="hc-head">
+      <button type="button" class="ghost" id="hcPrev">‹</button>
+      <b id="hcTitle" style="flex:1;text-align:center;"></b>
+      <button type="button" class="ghost" id="hcNext">›</button>
+    </div>
+    <div class="hc-grid hc-dow"><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span></div>
+    <div class="hc-grid" id="hcDays"></div>
+    <div class="hc-legend"><span class="hc-dot red"></span> chưa đủ ✅ các kho &nbsp; <span class="hc-dot sel"></span> đang chọn</div>
+    <div class="row" style="margin-top:8px;justify-content:space-between;">
+      <button type="button" class="ghost" id="hcToday">Hôm nay</button>
+      <button type="button" class="primary" id="hcClose">Xong</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="dayConfirmModal">
   <div class="modal-box">
     <p id="dayConfirmMsg" style="margin:0 0 10px;font-weight:600;">Xác nhận đã nhập dữ liệu kho?</p>
@@ -3460,6 +3488,12 @@ function getHistDate(){
   el.min = oldestKeptDate();
   el.max = today;
   if(!el.value || el.value > el.max || el.value < el.min) el.value = today;
+  let hb = document.getElementById("histDateBtn");
+  if(hb){
+    let lbl = "📅 " + fmtDateVN(el.value) + (el.value === today ? " (hôm nay)" : "");
+    if(hb.textContent !== lbl) hb.textContent = lbl;
+    hb.style.color = dayIncomplete(el.value) ? "var(--danger)" : "";
+  }
   return el.value;
 }
 /* ===== GHI NHẬP/XUẤT THEO NGÀY ĐANG CHỌN =====
@@ -3548,6 +3582,54 @@ function noteCompareStrip(whId, dateStr){
    thu hồi riêng, tự nó đã là 2 chiều). Lưu CHUNG với ghi chú (field "confirm"
    trên cùng bản ghi note theo whId+date) để khỏi phải xin thêm Firestore
    collection/rule mới — đồng bộ qua cùng đường với updateWarehouseNote/updateHistoryNote. */
+/* ===== LỊCH CHỌN NGÀY RIÊNG: ngày chưa đủ ✅ ở tất cả các kho hiện ĐỎ =====
+   Chỉ xét từ ngày cũ nhất còn lưu (30 ngày) tới hôm nay; ngày tương lai/quá cũ để xám. */
+function histCalWarehouses(){ return (db.warehouses || []).filter(w => !w.deleted); }
+function dayIncomplete(dateStr){
+  let whs = histCalWarehouses();
+  if(!whs.length) return false;
+  if(dateStr > localDateStrOffset(0) || dateStr < oldestKeptDate()) return false;
+  return whs.some(w => getDayConfirm(w.id, dateStr) !== "done");
+}
+var _hcMonth = null; // {y, m} m: 0-11
+function openHistCal(){
+  let cur = getHistDate().split("-").map(Number);
+  _hcMonth = { y: cur[0], m: cur[1] - 1 };
+  renderHistCal();
+  document.getElementById("histCalModal").classList.add("active");
+}
+function closeHistCal(){ document.getElementById("histCalModal").classList.remove("active"); }
+function pickHistDate(ds){
+  let el = document.getElementById("histDate");
+  if(el) el.value = ds;
+  closeHistCal();
+  onHistDateChange();
+}
+function renderHistCal(){
+  let y = _hcMonth.y, m = _hcMonth.m;
+  let p2 = n => (n < 10 ? "0" : "") + n;
+  let today = localDateStrOffset(0), oldest = oldestKeptDate(), sel = getHistDate();
+  document.getElementById("hcTitle").textContent = "Tháng " + (m + 1) + " năm " + y;
+  let first = new Date(y, m, 1);
+  let lead = (first.getDay() + 6) % 7;            // T2 = cột đầu
+  let dim = new Date(y, m + 1, 0).getDate();
+  let h = "";
+  for(let i = 0; i < lead; i++) h += "<span></span>";
+  for(let d = 1; d <= dim; d++){
+    let ds = y + "-" + p2(m + 1) + "-" + p2(d);
+    let ok = ds <= today && ds >= oldest;
+    let cls = "hc-day" + (ok ? "" : " off") + (ok && dayIncomplete(ds) ? " red" : "") +
+              (ds === today ? " today" : "") + (ds === sel ? " sel" : "");
+    h += ok ? `<span class="${cls}" onclick="pickHistDate('${ds}')">${d}</span>` : `<span class="${cls}">${d}</span>`;
+  }
+  document.getElementById("hcDays").innerHTML = h;
+}
+function hcShift(delta){
+  let d = new Date(_hcMonth.y, _hcMonth.m + delta, 1);
+  _hcMonth = { y: d.getFullYear(), m: d.getMonth() };
+  renderHistCal();
+}
+
 function getDayConfirm(whId, dateStr){
   let today = localDateStrOffset(0);
   if(dateStr === today){
@@ -3577,6 +3659,8 @@ function setDayConfirm(whId, dateStr, status){
   }
   saveDBSoon();
   refreshNoteCompareStrips();
+  let hb = document.getElementById("histDateBtn");
+  if(hb){ getHistDate(); }
 }
 function dayConfirmBadge(whId, dateStr){
   let st = getDayConfirm(whId, dateStr);
@@ -4724,6 +4808,10 @@ function bindTapAction(el, fn){
 bindTapAction(document.getElementById("txSubmitBtn"), processTransaction);
 bindTapAction(document.getElementById("askModalYesBtn"), askModalYes);
 bindTapAction(document.getElementById("askModalNoBtn"), askModalNo);
+bindTapAction(document.getElementById("hcPrev"), function(){ hcShift(-1); });
+bindTapAction(document.getElementById("hcNext"), function(){ hcShift(1); });
+bindTapAction(document.getElementById("hcClose"), closeHistCal);
+bindTapAction(document.getElementById("hcToday"), function(){ closeHistCal(); histGoToday(); });
 bindTapAction(document.getElementById("dayConfirmDoneBtn"), function(){ dayConfirmChoose("done"); });
 bindTapAction(document.getElementById("dayConfirmNotBtn"), function(){ dayConfirmChoose("notdone"); });
 bindTapAction(document.getElementById("dayConfirmCancelBtn"), closeDayConfirmModal);
