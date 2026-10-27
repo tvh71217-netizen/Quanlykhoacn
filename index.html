@@ -427,6 +427,26 @@
 }
 #kbPad .kb-cnt.sel{background:var(--brand,#0a7);border-color:var(--brand,#0a7);color:#fff;}
 body.kb-open{padding-bottom:340px;}
+#txBulkModal{padding:0;}
+#txBulkModal .modal-box{width:100%;max-width:100%;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:0;padding:10px 10px calc(8px + env(safe-area-inset-bottom));}
+#txBulkModal textarea{height:84px !important;}
+#txBulkSugRow{flex:0 0 auto;margin-top:4px;}
+#txBulkModeLbl{font-size:12px;color:#666;margin-bottom:2px;}
+#txBulkSug{display:flex;gap:6px;overflow-x:auto;min-height:40px;padding:2px 0 4px;-webkit-overflow-scrolling:touch;}
+#txBulkSug button{flex:0 0 auto;padding:7px 13px;border:1px solid #cfe0f5;background:#f2f7ff;border-radius:18px;font-size:16px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
+#txBulkSug .none{font-size:12px;color:#999;align-self:center;}
+.txbk{display:grid;gap:5px;margin:2px 0 4px;flex:0 0 auto;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
+.txbk button{min-height:46px;padding:0;border:1px solid #d5d5d5;border-radius:9px;background:#fff;font-size:18px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
+.txbk button:active{background:#e2e2e2;}
+.txbk button.l{background:#f2f7ff;border-color:#cfe0f5;}
+.txbk button.y{background:#fff8e6;border-color:#f0d79a;color:#8a6400;}
+.txbk.m-code{grid-template-columns:repeat(8,1fr);}
+.txbk.m-qty{grid-template-columns:repeat(3,1fr);}
+.txbk.m-qty button{min-height:58px;font-size:26px;}
+.txbk.m-date{grid-template-columns:repeat(7,1fr);}
+.txbk.m-date button{min-height:58px;font-size:21px;}
+.txbk button.full{grid-column:1 / -1;min-height:46px;font-size:16px;}
+body.kb-open{padding-bottom:340px;}
 .txbk{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin:8px 0 4px;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
 .txbk button{min-height:40px;padding:0;border:1px solid #d5d5d5;border-radius:8px;background:#fff;font-size:17px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
 .txbk button:active{background:#e2e2e2;}
@@ -1025,6 +1045,7 @@ body.kb-open{padding-bottom:340px;}
       <div id="txBulkBrandRow" style="display:none;margin-bottom:6px;"><select id="txBulkBrand" style="width:100%;" onchange="txBulkPreview()"></select></div>
       <div id="txBulkPreview" style="font-size:13px;line-height:1.8;border-top:1px solid var(--line);padding-top:6px;"></div>
     </div>
+    <div id="txBulkSugRow"><div id="txBulkModeLbl"></div><div id="txBulkSug"></div></div>
     <div class="txbk" id="txBulkKb" aria-label="Bàn phím nhập nhiều mã"></div>
     <div class="modal-actions">
       <button class="primary" id="txBulkGo" onclick="txBulkCommit()">Ghi</button>
@@ -7901,27 +7922,110 @@ function openTxBulk(){
   txBulkSetType((txTypeValue === "out" || txTypeValue === "send") ? "out" : "in");
 }
 
+/* Vị trí con trỏ nằm ở phần nào của dòng: mã (chưa có dấu phẩy) / SL (sau dấu phẩy 1) / date (sau dấu phẩy 2) */
+function txBulkCaretInfo(){
+  let ta = document.getElementById("txBulkArea");
+  let v = ta.value;
+  let c = ta.selectionStart;
+  if(c == null) c = v.length;
+  let ls = c === 0 ? 0 : v.lastIndexOf("\n", c - 1) + 1;
+  let seg = v.slice(ls, c);
+  let n = (seg.match(/,/g) || []).length;
+  return { mode: n === 0 ? "code" : (n === 1 ? "qty" : "date"), ls: ls, seg: seg, caret: c };
+}
+function txBulkKbKeys(mode){
+  let k = [];
+  if(mode === "code"){
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(c => k.push([c, c, "l"]));
+    "0123456789".split("").forEach(c => k.push([c, c, ""]));
+    k.push(["-", "-", "y"], [",", ",", "y"], [" ", "␣", "y"], ["BS", "⌫", "y"]);
+  } else if(mode === "qty"){
+    "123456789".split("").forEach(c => k.push([c, c, ""]));
+    k.push(["BS", "⌫", "y"], ["0", "0", ""], [",", ",", "y"], ["NL", "↵ dòng mới", "y full"]);
+  } else {
+    "ABCDEFGHIJKLM".split("").forEach(c => k.push([c, c, "l"]));
+    k.push(["/", "/", "y"]);
+    "1234567".split("").forEach(c => k.push([c, c, ""]));
+    ["8", "9", "10", "11", "12"].forEach(c => k.push([c, c, ""]));
+    k.push(["BS", "⌫", "y"], ["NL", "↵", "y"]);
+  }
+  return k;
+}
+function txBulkRenderKb(){
+  let kb = document.getElementById("txBulkKb");
+  if(!kb || !kb.dataset.built) return;
+  let info = txBulkCaretInfo();
+  if(kb.dataset.mode !== info.mode){
+    kb.dataset.mode = info.mode;
+    kb.className = "txbk m-" + info.mode;
+    kb.innerHTML = txBulkKbKeys(info.mode).map(x =>
+      `<button type="button" class="${x[2]}" data-k="${x[0]}">${x[1]}</button>`).join("");
+  }
+  document.getElementById("txBulkModeLbl").textContent = ({
+    code: "Đang nhập: MÃ — gõ vài chữ đầu, chạm gợi ý bên dưới",
+    qty:  "Đang nhập: SỐ LƯỢNG",
+    date: "Đang nhập: DATE — vd 1a/2b/1c (1 bình A, 2 bình B, 1 bình C)"
+  })[info.mode];
+  txBulkRenderSuggest(info);
+}
+function txBulkRenderSuggest(info){
+  let box = document.getElementById("txBulkSug");
+  if(info.mode !== "code"){ box.innerHTML = ""; return; }
+  let whId = document.getElementById("txBulkWh").value;
+  let items = db.items.filter(i => i.whId === whId && (_txBulkType === "in" || (i.qty || 0) > 0));
+  let typed = info.seg.trim().toUpperCase();
+  let list = [];
+  if(!typed){
+    let seen = {};
+    for(let i = db.transactions.length - 1; i >= 0 && list.length < 8; i--){
+      let t = db.transactions[i];
+      if(t.whId !== whId) continue;
+      let it = items.find(x => codeKey(x.code) === codeKey(t.code));
+      if(!it || seen[codeKey(it.code)]) continue;
+      seen[codeKey(it.code)] = 1;
+      list.push(it.code);
+    }
+  } else {
+    let key = codeKey(typed), st = [], inc = [];
+    items.forEach(i => {
+      let c = codeKey(i.code);
+      if(c.indexOf(key) === 0) st.push(i.code); else if(c.indexOf(key) > 0) inc.push(i.code);
+    });
+    list = st.concat(inc).slice(0, 10);
+  }
+  box.innerHTML = list.length
+    ? list.map(c => `<button type="button" data-code="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join("")
+    : `<span class="none">${typed ? "Không có mã nào khớp trong kho này" : "Chưa có mã gần đây"}</span>`;
+}
+function txBulkPickCode(code){
+  let ta = document.getElementById("txBulkArea");
+  let info = txBulkCaretInfo();
+  if(info.mode !== "code") return;
+  let v = ta.value;
+  let le = v.indexOf("\n", info.ls); if(le < 0) le = v.length;
+  let ci = v.indexOf(",", info.ls);
+  let hasComma = ci >= 0 && ci < le;
+  ta.setRangeText(code + (hasComma ? "" : ", "), info.ls, hasComma ? ci : le, "end");
+  txBulkPreview();
+}
 function txBulkBuildKb(){
   let kb = document.getElementById("txBulkKb");
   if(!kb || kb.dataset.built) return;
   kb.dataset.built = "1";
-  let rows = [
-    "1234567890".split("").map(c => [c, ""]),
-    "QWERTYUIOP".split("").map(c => [c, "l"]),
-    "ASDFGHJKL".split("").map(c => [c, "l"]).concat([["-", "y"]]),
-    "ZXCVBNM".split("").map(c => [c, "l"]).concat([[",", "y"], ["/", "y"], ["BS", "y"]])
-  ];
-  let h = "";
-  rows.forEach(r => r.forEach(k => {
-    h += `<button type="button" class="${k[1]}" data-k="${k[0]}">${k[0] === "BS" ? "⌫" : k[0]}</button>`;
-  }));
-  h += `<button type="button" class="w6" data-k=" ">dấu cách</button><button type="button" class="w4 y" data-k="NL">↵ dòng mới</button>`;
-  kb.innerHTML = h;
   kb.addEventListener("pointerdown", function(ev){
     let btn = ev.target.closest("button");
     if(!btn) return;
     ev.preventDefault();
     txBulkKey(btn.getAttribute("data-k"));
+  });
+  document.getElementById("txBulkSug").addEventListener("click", function(ev){
+    let btn = ev.target.closest("button[data-code]");
+    if(btn) txBulkPickCode(btn.getAttribute("data-code"));
+  });
+  let ta = document.getElementById("txBulkArea");
+  ["click", "keyup", "focus"].forEach(n => ta.addEventListener(n, txBulkRenderKb));
+  document.addEventListener("selectionchange", function(){
+    if(document.activeElement === ta) txBulkRenderKb();
   });
 }
 function txBulkKey(k){
@@ -7929,10 +8033,13 @@ function txBulkKey(k){
   let s = ta.selectionStart, e = ta.selectionEnd;
   if(s == null || e == null){ s = e = ta.value.length; }
   if(k === "BS"){
-    if(s === e){ if(s <= 0) return; s--; }
+    if(s === e){
+      if(s <= 0) return;
+      s = (ta.value.slice(s - 2, s) === ", ") ? s - 2 : s - 1;   // xoá cả ", " một lần
+    }
     ta.setRangeText("", s, e, "end");
   } else {
-    ta.setRangeText(k === "NL" ? "\n" : k, s, e, "end");
+    ta.setRangeText(k === "NL" ? "\n" : (k === "," ? ", " : k), s, e, "end");
   }
   if(ta.selectionStart >= ta.value.length - 1) ta.scrollTop = ta.scrollHeight;
   txBulkPreview();
@@ -8094,6 +8201,7 @@ function txBulkPreview(){
   let btn = document.getElementById("txBulkGo");
   let ok = a.rows.length - errs;
   btn.textContent = errs ? `Sửa ${errs} dòng lỗi` : (a.rows.length ? `Ghi ${word} ${a.rows.length} mã` : "Ghi");
+  txBulkRenderKb();
 }
 function txBulkCommit(){
   let a = txBulkAnalyze();
