@@ -435,25 +435,20 @@ body.kb-open{padding-bottom:340px;}
 #txBulkSug{display:flex;gap:6px;overflow-x:auto;min-height:40px;padding:2px 0 4px;-webkit-overflow-scrolling:touch;}
 #txBulkSug button{flex:0 0 auto;padding:7px 13px;border:1px solid #cfe0f5;background:#f2f7ff;border-radius:18px;font-size:16px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
 #txBulkSug .none{font-size:12px;color:#999;align-self:center;}
-.txbk{display:grid;gap:5px;margin:2px 0 4px;flex:0 0 auto;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
-.txbk button{min-height:46px;padding:0;border:1px solid #d5d5d5;border-radius:9px;background:#fff;font-size:18px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
-.txbk button:active{background:#e2e2e2;}
-.txbk button.l{background:#f2f7ff;border-color:#cfe0f5;}
-.txbk button.y{background:#fff8e6;border-color:#f0d79a;color:#8a6400;}
-.txbk.m-code{grid-template-columns:repeat(8,1fr);}
-.txbk.m-qty{grid-template-columns:repeat(3,1fr);}
-.txbk.m-qty button{min-height:58px;font-size:26px;}
-.txbk.m-date{grid-template-columns:repeat(7,1fr);}
-.txbk.m-date button{min-height:58px;font-size:21px;}
-.txbk button.full{grid-column:1 / -1;min-height:46px;font-size:16px;}
+.txbk{flex:0 0 auto;background:#d1d4da;border-radius:10px;padding:6px 4px 6px;margin:2px 0 4px;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
+.txbk .kr{display:flex;gap:5px;margin-bottom:6px;}
+.txbk .kr:last-child{margin-bottom:0;}
+.txbk .kr.pad{padding:0 5%;}
+.txbk button{flex:1 1 0;min-width:0;min-height:46px;padding:0;border:0;border-radius:6px;background:#fff;box-shadow:0 1px 0 #8e9096;font-size:21px;font-weight:400;color:#111;font-family:inherit;cursor:pointer;}
+.txbk button:active{background:#c4c7cd;}
+.txbk .kr.top button{min-height:42px;font-size:20px;font-weight:600;background:#f4f5f7;}
+.txbk button.f{background:#acb1ba;font-size:17px;}
+.txbk button.f:active{background:#939aa6;}
+.txbk button.w{flex:1.6 1 0;}
+.txbk button.sp{flex:5 1 0;font-size:16px;}
+.txbk button.en{flex:2 1 0;font-size:16px;}
 body.kb-open{padding-bottom:340px;}
-.txbk{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin:8px 0 4px;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
-.txbk button{min-height:40px;padding:0;border:1px solid #d5d5d5;border-radius:8px;background:#fff;font-size:17px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
-.txbk button:active{background:#e2e2e2;}
-.txbk button.l{background:#f2f7ff;border-color:#cfe0f5;}
-.txbk button.y{background:#fff8e6;border-color:#f0d79a;color:#8a6400;}
-.txbk button.w6{grid-column:span 6;font-size:14px;}
-.txbk button.w4{grid-column:span 4;font-size:14px;}
+body.kb-open{padding-bottom:340px;}
 
 .kb-active{outline:2px solid var(--brand,#0a7) !important;outline-offset:1px;background:#fffbe8 !important;}
   /* ===== MENU CONG CU (6 nut) ===== */
@@ -7933,34 +7928,21 @@ function txBulkCaretInfo(){
   let n = (seg.match(/,/g) || []).length;
   return { mode: n === 0 ? "code" : (n === 1 ? "qty" : "date"), ls: ls, seg: seg, caret: c };
 }
-function txBulkKbKeys(mode){
-  let k = [];
-  if(mode === "code"){
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(c => k.push([c, c, "l"]));
-    "0123456789".split("").forEach(c => k.push([c, c, ""]));
-    k.push(["-", "-", "y"], [",", ",", "y"], [" ", "␣", "y"], ["BS", "⌫", "y"]);
-  } else if(mode === "qty"){
-    "123456789".split("").forEach(c => k.push([c, c, ""]));
-    k.push(["BS", "⌫", "y"], ["0", "0", ""], [",", ",", "y"], ["NL", "↵ dòng mới", "y full"]);
-  } else {
-    "ABCDEFGHIJKLM".split("").forEach(c => k.push([c, c, "l"]));
-    k.push(["/", "/", "y"]);
-    "1234567".split("").forEach(c => k.push([c, c, ""]));
-    ["8", "9", "10", "11", "12"].forEach(c => k.push([c, c, ""]));
-    k.push(["BS", "⌫", "y"], ["NL", "↵", "y"]);
-  }
-  return k;
-}
 function txBulkRenderKb(){
   let kb = document.getElementById("txBulkKb");
   if(!kb || !kb.dataset.built) return;
-  let info = txBulkCaretInfo();
-  if(kb.dataset.mode !== info.mode){
-    kb.dataset.mode = info.mode;
-    kb.className = "txbk m-" + info.mode;
-    kb.innerHTML = txBulkKbKeys(info.mode).map(x =>
-      `<button type="button" class="${x[2]}" data-k="${x[0]}">${x[1]}</button>`).join("");
+  if(!kb.dataset.drawn){
+    kb.dataset.drawn = "1";
+    let btn = (k, lab, cls) => `<button type="button" class="${cls || ""}" data-k="${k}">${lab}</button>`;
+    let row = (str) => str.split("").map(c => btn(c, c)).join("");
+    kb.innerHTML =
+      `<div class="kr top">${"1234567890".split("").map(c => btn(c, c)).join("")}${btn(",", ",")}${btn("/", "/")}</div>` +
+      `<div class="kr">${row("QWERTYUIOP")}</div>` +
+      `<div class="kr pad">${row("ASDFGHJKL")}</div>` +
+      `<div class="kr">${row("ZXCVBNM")}${btn("BS", "⌫", "f w")}</div>` +
+      `<div class="kr">${btn("-", "-", "f")}${btn(" ", "dấu cách", "sp")}${btn("NL", "Nhập", "f en")}</div>`;
   }
+  let info = txBulkCaretInfo();
   document.getElementById("txBulkModeLbl").textContent = ({
     code: "Đang nhập: MÃ — gõ vài chữ đầu, chạm gợi ý bên dưới",
     qty:  "Đang nhập: SỐ LƯỢNG",
