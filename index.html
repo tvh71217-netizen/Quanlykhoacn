@@ -427,6 +427,14 @@
 }
 #kbPad .kb-cnt.sel{background:var(--brand,#0a7);border-color:var(--brand,#0a7);color:#fff;}
 body.kb-open{padding-bottom:340px;}
+.txbk{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin:8px 0 4px;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
+.txbk button{min-height:40px;padding:0;border:1px solid #d5d5d5;border-radius:8px;background:#fff;font-size:17px;font-weight:600;color:#111;font-family:inherit;cursor:pointer;}
+.txbk button:active{background:#e2e2e2;}
+.txbk button.l{background:#f2f7ff;border-color:#cfe0f5;}
+.txbk button.y{background:#fff8e6;border-color:#f0d79a;color:#8a6400;}
+.txbk button.w6{grid-column:span 6;font-size:14px;}
+.txbk button.w4{grid-column:span 4;font-size:14px;}
+
 .kb-active{outline:2px solid var(--brand,#0a7) !important;outline-offset:1px;background:#fffbe8 !important;}
   /* ===== MENU CONG CU (6 nut) ===== */
   .menu-btn{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;color:var(--ink);}
@@ -718,6 +726,9 @@ body.kb-open{padding-bottom:340px;}
         </ul>
       </div>
       <div class="row" style="margin-top:10px;">
+        <button type="button" class="ghost" id="txBulkBtn" style="width:100%;" onclick="openTxBulk()">Nhập nhiều mã</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
         <button class="primary" id="txSubmitBtn">Thực hiện</button>
       </div>
     </div>
@@ -993,6 +1004,31 @@ body.kb-open{padding-bottom:340px;}
       <button class="primary" onclick="doImport()">Nhập</button>
       <button class="ghost" onclick="closeImportSelectModal(); document.getElementById('importFile').click();">Chọn file khác</button>
       <button class="ghost" onclick="closeImportSelectModal()">Huỷ</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal nhập / xuất nhiều mã cùng lúc (tab Nhập / Xuất) -->
+<div class="modal-overlay" id="txBulkModal">
+  <div class="modal-box wide">
+    <p class="modal-title" style="font-weight:bold;">Nhập / xuất nhiều mã cùng lúc</p>
+    <div class="modal-scroll">
+      <div class="row" style="margin-bottom:8px;">
+        <select id="txBulkWh" style="flex:1;" onchange="txBulkPreview()"></select>
+        <div style="display:flex;flex:1;gap:6px;">
+          <button type="button" id="txBulkInBtn" class="tx-type-btn tx-type-in" style="flex:1;" onclick="txBulkSetType('in')">☐ Nhập</button>
+          <button type="button" id="txBulkOutBtn" class="tx-type-btn tx-type-out" style="flex:1;" onclick="txBulkSetType('out')">☐ Xuất</button>
+        </div>
+      </div>
+      <textarea id="txBulkArea" style="height:96px;" placeholder="DK, 4, 1a/2b/1c&#10;DF40AL, 3, A&#10;55B24L, 2, B/C" oninput="txBulkPreview()"></textarea>
+      <p style="font-size:12px;color:var(--muted);margin:4px 0 6px;">Mỗi dòng: <b>mã, SL, date</b>. Cùng mã khác date: <code>DK, 4, 1a/2b/1c</code> = 1 bình A, 2 bình B, 1 bình C (cộng lại phải bằng SL). Một date chung cho cả dòng: <code>DF40AL, 3, A</code>. Date bỏ trống được; Xuất bỏ trống thì lấy bình cũ nhất.</p>
+      <div id="txBulkBrandRow" style="display:none;margin-bottom:6px;"><select id="txBulkBrand" style="width:100%;" onchange="txBulkPreview()"></select></div>
+      <div id="txBulkPreview" style="font-size:13px;line-height:1.8;border-top:1px solid var(--line);padding-top:6px;"></div>
+    </div>
+    <div class="txbk" id="txBulkKb" aria-label="Bàn phím nhập nhiều mã"></div>
+    <div class="modal-actions">
+      <button class="primary" id="txBulkGo" onclick="txBulkCommit()">Ghi</button>
+      <button class="ghost" onclick="closeTxBulk()">Đóng</button>
     </div>
   </div>
 </div>
@@ -7838,6 +7874,275 @@ function parseBulkLines(text){
     if(m) return { code: m[1].trim().toUpperCase(), notes: m[2].trim() };
     return { code: line.toUpperCase(), notes: "" };
   }).filter(x => x.code);
+}
+
+
+/* ===================================================================
+   NHẬP / XUẤT NHIỀU MÃ CÙNG LÚC (tab Nhập / Xuất)
+   Mỗi dòng "mã SL date" -> mỗi dòng ghi thành MỘT giao dịch riêng như ghi tay.
+   Chỉ Nhập và Xuất thường (Đổi date / Nhập từ kho / Xuất tới kho vẫn ghi từng mã).
+   =================================================================== */
+var _txBulkType = "in";
+function openTxBulk(){
+  if(db.warehouses.length === 0){ alert("Vui lòng thêm kho trước!"); return; }
+  let sel = document.getElementById("txBulkWh");
+  sel.innerHTML = db.warehouses.map(w => `<option value="${w.id}">${escapeHtml(w.name)}</option>`).join("");
+  let cur = (document.getElementById("txWh") || {}).value;
+  if(cur && db.warehouses.some(w => w.id === cur)) sel.value = cur;
+  let bs = document.getElementById("txBulkBrand");
+  bs.innerHTML = `<option value="">— Chọn hãng cho mã mới * —</option>` +
+    getAllBrands().map(b => `<option value="${escapeHtml(b)}">${escapeHtml(getBrandLabel(b))}</option>`).join("");
+  bs.value = "";
+  let ta = document.getElementById("txBulkArea");
+  ta.value = "";
+  if(IS_COARSE_POINTER){ ta.readOnly = true; ta.setAttribute("inputmode", "none"); }   // điện thoại: dùng bàn phím riêng bên dưới
+  txBulkBuildKb();
+  document.getElementById("txBulkModal").classList.add("active");
+  txBulkSetType((txTypeValue === "out" || txTypeValue === "send") ? "out" : "in");
+}
+
+function txBulkBuildKb(){
+  let kb = document.getElementById("txBulkKb");
+  if(!kb || kb.dataset.built) return;
+  kb.dataset.built = "1";
+  let rows = [
+    "1234567890".split("").map(c => [c, ""]),
+    "QWERTYUIOP".split("").map(c => [c, "l"]),
+    "ASDFGHJKL".split("").map(c => [c, "l"]).concat([["-", "y"]]),
+    "ZXCVBNM".split("").map(c => [c, "l"]).concat([[",", "y"], ["/", "y"], ["BS", "y"]])
+  ];
+  let h = "";
+  rows.forEach(r => r.forEach(k => {
+    h += `<button type="button" class="${k[1]}" data-k="${k[0]}">${k[0] === "BS" ? "⌫" : k[0]}</button>`;
+  }));
+  h += `<button type="button" class="w6" data-k=" ">dấu cách</button><button type="button" class="w4 y" data-k="NL">↵ dòng mới</button>`;
+  kb.innerHTML = h;
+  kb.addEventListener("pointerdown", function(ev){
+    let btn = ev.target.closest("button");
+    if(!btn) return;
+    ev.preventDefault();
+    txBulkKey(btn.getAttribute("data-k"));
+  });
+}
+function txBulkKey(k){
+  let ta = document.getElementById("txBulkArea");
+  let s = ta.selectionStart, e = ta.selectionEnd;
+  if(s == null || e == null){ s = e = ta.value.length; }
+  if(k === "BS"){
+    if(s === e){ if(s <= 0) return; s--; }
+    ta.setRangeText("", s, e, "end");
+  } else {
+    ta.setRangeText(k === "NL" ? "\n" : k, s, e, "end");
+  }
+  if(ta.selectionStart >= ta.value.length - 1) ta.scrollTop = ta.scrollHeight;
+  txBulkPreview();
+}
+function closeTxBulk(){ document.getElementById("txBulkModal").classList.remove("active"); }
+function txBulkSetType(t){
+  _txBulkType = (t === "out") ? "out" : "in";
+  let a = document.getElementById("txBulkInBtn"), b = document.getElementById("txBulkOutBtn");
+  a.classList.toggle("active", _txBulkType === "in");
+  b.classList.toggle("active", _txBulkType === "out");
+  a.textContent = (_txBulkType === "in" ? "☑" : "☐") + " Nhập";
+  b.textContent = (_txBulkType === "out" ? "☑" : "☐") + " Xuất";
+  txBulkPreview();
+}
+function txBulkLev(a, b){
+  let m = a.length, n = b.length, d = [];
+  for(let i = 0; i <= m; i++){ d[i] = [i]; }
+  for(let j = 1; j <= n; j++) d[0][j] = j;
+  for(let i = 1; i <= m; i++) for(let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[m][n];
+}
+/* Date của 1 dòng: "1a/2b/1c" = 1 bình A, 2 bình B, 1 bình C. "A" một mình = chung cho cả SL.
+   Mỗi phần có thể có số đứng trước (số bình), không có thì tính 1 bình. */
+function txBulkDates(dstr, qty){
+  let toks = String(dstr || "").toUpperCase().split(/[\/\s,;]+/).filter(Boolean);
+  if(toks.length === 0) return { dates: new Array(qty).fill("") };
+  let items = [], hadCount = false;
+  toks.forEach(t => {
+    if(t === "?" || t === "-"){ items.push({ n: 1, d: "" }); return; }
+    let m = t.match(/^(\d+)([A-M])$/);
+    if(m){ hadCount = true; items.push({ n: parseInt(m[1], 10), d: m[2] }); }
+    else items.push({ n: 1, d: t });
+  });
+  if(items.length === 1 && !hadCount) return { dates: new Array(qty).fill(items[0].d) };
+  let sum = items.reduce((a, x) => a + x.n, 0);
+  if(sum !== qty) return { err: `Date cộng lại được ${sum} bình nhưng SL là ${qty}` };
+  let dates = [];
+  items.forEach(x => { for(let i = 0; i < x.n; i++) dates.push(x.d); });
+  return { dates: dates };
+}
+function txBulkParse(){
+  let out = [];
+  (document.getElementById("txBulkArea").value || "").split(/\r?\n/).forEach(raw => {
+    let line = raw.trim();
+    if(!line) return;
+    let codeStr, qtyStr, dstr = "";
+    if(line.indexOf(",") >= 0){
+      let parts = line.split(",");
+      codeStr = parts[0].trim(); qtyStr = (parts[1] || "").trim(); dstr = parts.slice(2).join("/");
+    } else {
+      let m = line.match(/^(.+?)\s+(\d+)(?:\s+(.*))?$/);
+      if(m){ codeStr = m[1]; qtyStr = m[2]; dstr = m[3] || ""; } else { codeStr = line; qtyStr = ""; }
+    }
+    let code = normalizeCodeOrder(codeStr.trim().toUpperCase());
+    let r = { raw: line, code: code, qty: 0, dates: [] };
+    out.push(r);
+    if(!/^\d+$/.test(qtyStr)){ r.err = "Thiếu số lượng — viết: mã, SL, date"; return; }
+    let qty = parseInt(qtyStr, 10);
+    r.qty = qty;
+    if(!code){ r.code = "(trống)"; r.err = "Thiếu mã"; return; }
+    if(qty <= 0 || qty > 200){ r.err = "Số lượng phải từ 1 đến 200"; return; }
+    let dd = txBulkDates(dstr, qty);
+    if(dd.err){ r.err = dd.err; return; }
+    r.dates = dd.dates;
+    let bad = r.dates.find(d => d && dateOrdinal(d) === null);
+    if(bad) r.err = `Date "${bad}" không hợp lệ (dùng A–M hoặc 1–12)`;
+  });
+  return out;
+}
+/* Chọn các bình cần lấy ra: ưu tiên đúng date đã ghi, còn lại lấy bình cũ nhất (giống Xuất ghi tay) */
+function txBulkPick(dates, req){
+  let used = new Set(), idx = [], miss = [];
+  req.forEach(q => {
+    if(q){
+      let f = dates.findIndex((d, i) => !used.has(i) && String(d || "").trim().toUpperCase() === q);
+      if(f !== -1){ used.add(f); idx.push(f); } else { idx.push(null); miss.push(q); }
+    } else idx.push(null);
+  });
+  let rest = dates.map((d, i) => ({ i: i, ord: dateOrdinal(d) })).filter(x => !used.has(x.i));
+  rest.sort((a, b) => {
+    if(a.ord === null && b.ord === null) return 0;
+    if(a.ord === null) return 1;
+    if(b.ord === null) return -1;
+    return a.ord - b.ord;
+  });
+  let k = 0;
+  idx = idx.map(v => (v !== null) ? v : (rest[k] ? rest[k++].i : null)).filter(v => v !== null);
+  return { removeIdx: idx, removed: idx.map(i => dates[i]), miss: miss };
+}
+/* Soi trước từng dòng (không ghi gì): trả về rows kèm err / warn / note */
+function txBulkAnalyze(){
+  let whId = document.getElementById("txBulkWh").value;
+  let type = _txBulkType;
+  let rows = txBulkParse();
+  let sim = {};
+  rows.forEach(r => {
+    if(r.err) return;
+    let key = codeKey(r.code);
+    let s = sim[key];
+    if(!s){
+      let it = db.items.find(i => i.whId === whId && codeKey(i.code) === key);
+      s = sim[key] = it ? { item: it, qty: it.qty || 0, dates: (it.dates || []).slice(), isNew: false }
+                        : { item: null, qty: 0, dates: [], isNew: true, flagged: false };
+    }
+    if(type === "in"){
+      if(s.isNew && !s.flagged){
+        s.flagged = true; r.isNew = true;
+        let best = null, bd = 99;
+        db.items.filter(i => i.whId === whId).forEach(i => {
+          let d = txBulkLev(codeKey(i.code), key);
+          if(d < bd){ bd = d; best = i.code; }
+        });
+        if(best && bd <= 2) r.hint = best;
+      }
+      s.qty += r.qty; s.dates = s.dates.concat(r.dates);
+    } else {
+      if(s.isNew){
+        r.err = "Chưa có mã này trong kho — chọn Nhập để thêm mới";
+        let best = null, bd = 99;
+        db.items.filter(i => i.whId === whId).forEach(i => {
+          let d = txBulkLev(codeKey(i.code), key);
+          if(d < bd){ bd = d; best = i.code; }
+        });
+        if(best && bd <= 2) r.err += ` · có phải ${best}?`;
+        return;
+      }
+      if(s.qty < r.qty){ r.err = `Không đủ để xuất — chỉ còn ${s.qty}`; return; }
+      let pk = txBulkPick(s.dates, r.dates);
+      r.removed = pk.removed;
+      if(pk.miss.length) r.warn = `kho không có date ${pk.miss.join(", ")}, lấy bình cũ nhất thay`;
+      let rm = new Set(pk.removeIdx);
+      s.dates = s.dates.filter((d, i) => !rm.has(i));
+      s.qty -= r.qty;
+    }
+  });
+  return { whId: whId, type: type, rows: rows };
+}
+function txBulkPreview(){
+  let box = document.getElementById("txBulkPreview");
+  if(!box) return;
+  let a = txBulkAnalyze();
+  let hasNew = a.rows.some(r => r.isNew);
+  document.getElementById("txBulkBrandRow").style.display = hasNew ? "block" : "none";
+  let brand = (document.getElementById("txBulkBrand").value || "").trim();
+  let word = a.type === "in" ? "nhập" : "xuất";
+  let errs = a.rows.filter(r => r.err).length;
+  let html = a.rows.map(r => {
+    let dtxt = r.dates && r.dates.length ? summarizeDates(r.dates) : "";
+    if(r.err) return `<div style="color:var(--danger);">✗ ${escapeHtml(r.code)} — ${escapeHtml(r.err)}</div>`;
+    if(r.isNew){
+      return `<div style="color:#b26a00;">⚠ ${escapeHtml(r.code)} — mã lạ, sẽ thêm mới${brand ? " (" + escapeHtml(brand) + ")" : " · chọn hãng ở trên"}` +
+        `${r.hint ? " · gợi ý: " + escapeHtml(r.hint) : ""} · nhập ${r.qty}, date ${escapeHtml(dtxt)}</div>`;
+    }
+    if(r.warn) return `<div style="color:#b26a00;">⚠ ${escapeHtml(r.code)} — ${word} ${r.qty} · ${escapeHtml(r.warn)}</div>`;
+    return `<div style="color:var(--brand-dark);">✓ ${escapeHtml(r.code)} — ${word} ${r.qty}, date ${escapeHtml(a.type === "out" ? summarizeDates(r.removed || r.dates) : dtxt)}</div>`;
+  }).join("");
+  box.innerHTML = html || `<span style="color:var(--muted);">Gõ các dòng ở trên, bên dưới sẽ hiện bản xem trước.</span>`;
+  let btn = document.getElementById("txBulkGo");
+  let ok = a.rows.length - errs;
+  btn.textContent = errs ? `Sửa ${errs} dòng lỗi` : (a.rows.length ? `Ghi ${word} ${a.rows.length} mã` : "Ghi");
+}
+function txBulkCommit(){
+  let a = txBulkAnalyze();
+  let whId = a.whId;
+  if(!whId){ alert("Vui lòng chọn kho!"); return; }
+  if(!guardWh(whId, "ghi nhập/xuất")) return;
+  if(a.rows.length === 0){ alert("Chưa có dòng nào để ghi!"); return; }
+  let errs = a.rows.filter(r => r.err);
+  if(errs.length){ alert(`Còn ${errs.length} dòng lỗi (chữ đỏ ✗) — sửa hoặc xoá các dòng đó rồi ghi lại.`); return; }
+  let brand = (document.getElementById("txBulkBrand").value || "").trim().toUpperCase();
+  if(a.type === "in" && a.rows.some(r => r.isNew) && !brand){
+    alert("Có mã lạ chưa có trong kho — hãy chọn hãng cho các mã mới!");
+    document.getElementById("txBulkBrand").focus();
+    return;
+  }
+  let nTx = 0, nNew = 0;
+  a.rows.forEach(r => {
+    let key = codeKey(r.code);
+    let item = db.items.find(i => i.whId === whId && codeKey(i.code) === key);
+    if(a.type === "in"){
+      if(!item){
+        item = { id: uid(), whId: whId, code: r.code, brand: brand, qty: 0, dates: [], notes: "",
+                 order: nextOrder(), zeroSince: null };
+        db.items.push(item);
+        nNew++;
+        ensureBrandFilterInit();
+        if(brandFilterSet) brandFilterSet.add(brand);
+      }
+      item.dates = (item.dates || []).concat(r.dates);
+      item.qty = (item.qty || 0) + r.qty;
+      item.zeroSince = null;
+      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "in", qty: r.qty, dates: r.dates.slice(), ts: txTimestamp() });
+      syncPendingDates(item);
+      nTx++;
+    } else {
+      if(!item || (item.qty || 0) < r.qty) return;
+      let pk = txBulkPick(item.dates || [], r.dates);
+      let rm = new Set(pk.removeIdx);
+      item.dates = (item.dates || []).filter((d, i) => !rm.has(i));
+      item.qty -= r.qty;
+      if(item.qty === 0){ item.zeroSince = new Date().toISOString(); item.dates = []; }
+      syncPendingDates(item);
+      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "out", qty: r.qty, dates: pk.removed, ts: txTimestamp() });
+      nTx++;
+    }
+  });
+  closeTxBulk();
+  finishTransaction(whId);
+  alert(`Đã ghi ${a.type === "in" ? "nhập" : "xuất"} ${nTx} mã` + (nNew ? `, trong đó ${nNew} mã mới` : "") + ".");
 }
 
 function bulkAddItems(){
