@@ -555,7 +555,7 @@ body.kb-open{padding-bottom:340px;}
 
   /* ===== Thanh gợi ý mã (ô Mã bình + các ô Ghi chú) — tự vẽ nên Android nào cũng hiện ===== */
   #codeSugBar{position:fixed;left:0;right:0;bottom:0;z-index:9500;display:none;gap:8px;align-items:center;
-    overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap;padding:8px 10px;
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;touch-action:pan-x;white-space:nowrap;padding:8px 10px;
     background:#fff;border-top:1px solid var(--line);box-shadow:0 -2px 8px rgba(0,0,0,.12);}
   #codeSugBar .sg-lbl{flex:0 0 auto;font-size:12px;color:var(--muted);}
   #codeSugBar button{flex:0 0 auto;font-size:15px;font-weight:600;line-height:1;padding:9px 14px;border-radius:999px;
@@ -10929,12 +10929,22 @@ else window.addEventListener("load", cloudInit);
     el.focus();
     update(el);
   }
-  // pointerdown + preventDefault: bấm chip không làm ô đang gõ mất focus (bàn phím không tụt xuống)
+  // Chạm nhẹ (nhấc tay gần chỗ đặt xuống) mới chọn mã; kéo ngang thì chỉ cuộn thanh chip.
+  // preventDefault ở mousedown/touchstart-sau để bấm chip không làm ô đang gõ mất focus.
+  var down = null;
   bar.addEventListener("pointerdown", function(ev){
     var b = ev.target.closest("button[data-code]");
-    if(!b) return;
+    down = b ? { x: ev.clientX, y: ev.clientY, b: b, moved: false } : null;
+  });
+  bar.addEventListener("pointermove", function(ev){
+    if(down && (Math.abs(ev.clientX - down.x) > 8 || Math.abs(ev.clientY - down.y) > 8)) down.moved = true;
+  });
+  bar.addEventListener("pointercancel", function(){ down = null; });   // trình duyệt nhận cử chỉ cuộn
+  bar.addEventListener("pointerup", function(ev){
+    var d = down; down = null;
+    if(!d || d.moved) return;
     ev.preventDefault();
-    pick(b.getAttribute("data-code"));
+    pick(d.b.getAttribute("data-code"));
   });
   bar.addEventListener("mousedown", function(ev){ ev.preventDefault(); });
 
