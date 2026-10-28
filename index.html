@@ -1035,7 +1035,7 @@ body.kb-open{padding-bottom:340px;}
           <button type="button" id="txBulkOutBtn" class="tx-type-btn tx-type-out" style="flex:1;" onclick="txBulkSetType('out')">☐ Xuất</button>
         </div>
       </div>
-      <textarea id="txBulkArea" style="height:96px;" placeholder="DK, 4, 1a/2b/1c&#10;DF40AL, 3, A&#10;55B24L, 2, B/C" oninput="txBulkPreview()"></textarea>
+      <textarea id="txBulkArea" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" style="height:96px;" placeholder="DK, 4, 1a/2b/1c&#10;DF40AL, 3, A&#10;55B24L, 2, B/C" oninput="txBulkPreview()"></textarea>
       <p style="font-size:12px;color:var(--muted);margin:4px 0 6px;">Mỗi dòng: <b>mã, SL, date</b>. Cùng mã khác date: <code>DK, 4, 1a/2b/1c</code> = 1 bình A, 2 bình B, 1 bình C (cộng lại phải bằng SL). Một date chung cho cả dòng: <code>DF40AL, 3, A</code>. Date bỏ trống được; Xuất bỏ trống thì lấy bình cũ nhất.</p>
       <div id="txBulkBrandRow" style="display:none;margin-bottom:6px;"><select id="txBulkBrand" style="width:100%;" onchange="txBulkPreview()"></select></div>
       <div id="txBulkPreview" style="font-size:13px;line-height:1.8;border-top:1px solid var(--line);padding-top:6px;"></div>
@@ -7911,9 +7911,11 @@ function openTxBulk(){
   bs.value = "";
   let ta = document.getElementById("txBulkArea");
   ta.value = "";
-  if(IS_COARSE_POINTER){ ta.readOnly = true; ta.setAttribute("inputmode", "none"); }   // điện thoại: dùng bàn phím riêng bên dưới
+  ta.readOnly = false;
+  if(IS_COARSE_POINTER){ ta.setAttribute("inputmode", "none"); }   // điện thoại: ẩn bàn phím hệ thống nhưng vẫn có con trỏ, dán được
   txBulkBuildKb();
   document.getElementById("txBulkModal").classList.add("active");
+  setTimeout(function(){ try{ ta.focus({ preventScroll: true }); }catch(e){} }, 60);
   txBulkSetType((txTypeValue === "out" || txTypeValue === "send") ? "out" : "in");
 }
 
@@ -7940,7 +7942,7 @@ function txBulkRenderKb(){
       `<div class="kr">${row("QWERTYUIOP")}</div>` +
       `<div class="kr pad">${row("ASDFGHJKL")}</div>` +
       `<div class="kr">${row("ZXCVBNM")}${btn("BS", "⌫", "f w")}</div>` +
-      `<div class="kr">${btn("-", "-", "f")}${btn(" ", "dấu cách", "sp")}${btn("NL", "Nhập", "f en")}</div>`;
+      `<div class="kr">${btn("-", "-", "f")}${btn("PASTE", "Dán", "f")}${btn(" ", "dấu cách", "sp")}${btn("NL", "Nhập", "f en")}</div>`;
   }
   let info = txBulkCaretInfo();
   document.getElementById("txBulkModeLbl").textContent = ({
@@ -8005,12 +8007,40 @@ function txBulkBuildKb(){
     if(btn) txBulkPickCode(btn.getAttribute("data-code"));
   });
   let ta = document.getElementById("txBulkArea");
+  ta.addEventListener("paste", function(ev){
+    let cd = ev.clipboardData, t = cd && cd.getData("text/plain");
+    if(!t) return;
+    ev.preventDefault();
+    let s0 = ta.selectionStart, e0 = ta.selectionEnd;
+    ta.setRangeText(t.replace(/\r\n?|\u2028|\u2029/g, "\n").toUpperCase(), s0, e0, "end");
+    txBulkPreview();
+  });
   ["click", "keyup", "focus"].forEach(n => ta.addEventListener(n, txBulkRenderKb));
   document.addEventListener("selectionchange", function(){
     if(document.activeElement === ta) txBulkRenderKb();
   });
 }
+function txBulkPaste(){
+  let ta = document.getElementById("txBulkArea");
+  let put = function(t){
+    t = String(t || "").replace(/\r\n?|\u2028|\u2029/g, "\n").toUpperCase();
+    if(!t) return;
+    let s = ta.selectionStart, e = ta.selectionEnd;
+    if(s == null || e == null){ s = e = ta.value.length; }
+    ta.setRangeText(t, s, e, "end");
+    ta.scrollTop = ta.scrollHeight;
+    txBulkPreview();
+  };
+  if(navigator.clipboard && navigator.clipboard.readText){
+    navigator.clipboard.readText().then(put).catch(function(){
+      alert("Không đọc được bộ nhớ tạm — hãy chạm giữ vào ô gõ rồi chọn Dán.");
+    });
+  } else {
+    alert("Máy không hỗ trợ nút Dán — hãy chạm giữ vào ô gõ rồi chọn Dán.");
+  }
+}
 function txBulkKey(k){
+  if(k === "PASTE"){ txBulkPaste(); return; }
   let ta = document.getElementById("txBulkArea");
   let s = ta.selectionStart, e = ta.selectionEnd;
   if(s == null || e == null){ s = e = ta.value.length; }
