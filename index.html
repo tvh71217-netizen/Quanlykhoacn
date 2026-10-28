@@ -10870,6 +10870,16 @@ else window.addEventListener("load", cloudInit);
   function suggestions(el, text){
     var whId = whOf(el);
     var items = (db.items || []).filter(function(i){ return i.whId === whId; });
+    if(el.id !== "txCode"){
+      // Ghi chú: gợi ý mã của MỌI kho (mã kho này xếp trước), bỏ mã trùng tên
+      var seenK = {};
+      items.forEach(function(i){ seenK[codeKey(i.code)] = 1; });
+      (db.items || []).forEach(function(i){
+        var k = codeKey(i.code);
+        if(i.whId === whId || seenK[k]) return;
+        seenK[k] = 1; items.push(i);
+      });
+    }
     var key = flat(text), list = [];
     if(!key){
       if(el.id !== "txCode") return [];
@@ -10891,7 +10901,7 @@ else window.addEventListener("load", cloudInit);
       if(c.indexOf(key) === 0) st.push(i.code);
       else if(c.indexOf(key) > 0 && (el.id === "txCode" || (key.length >= 3 && /[A-Z]/.test(key)))) inc.push(i.code);
     });
-    return st.concat(inc).slice(0, 12);
+    return st.concat(inc).slice(0, el.id === "txCode" ? 12 : 20);
   }
   function place(){
     var vv = window.visualViewport;
