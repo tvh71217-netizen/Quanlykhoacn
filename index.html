@@ -715,16 +715,16 @@ body.kb-open{padding-bottom:340px;}
         border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;margin-bottom:8px;"></div>
       <div class="row">
         <select id="txWh" onchange="resetTxType(); refreshTxCodeList(); renderTxDateInputs();"></select>
-        <input type="text" id="txCode" autocomplete="off" placeholder="Mã bình" oninput="renderTxDateInputs()" onchange="resetTxTypeIfCodeChanged()" onkeydown="if(isEnterKey(event)){event.preventDefault();resetTxTypeIfCodeChanged();document.getElementById('txQty').focus();}">
+        <input type="text" id="txCode" autocomplete="off" placeholder="Mã bình" oninput="renderTxDateInputs()" onchange="resetTxTypeIfCodeChanged()" onkeydown="if(isEnterKey(event)){event.preventDefault();resetTxTypeIfCodeChanged();this.blur();}">
         <datalist id="txCodeList"></datalist>
-        <input type="number" id="txQty" class="small-input" min="0" placeholder="SL" oninput="renderTxDateInputs()" onkeydown="if(isEnterKey(event)){event.preventDefault();focusFirstTxDate();}">
         <div class="tx-type-grid">
-          <button type="button" id="txTypeInBtn" class="tx-type-btn tx-type-in" onclick="setTxType('in')">☐ Nhập</button>
-          <button type="button" id="txTypeOutBtn" class="tx-type-btn tx-type-out" onclick="setTxType('out')">☐ Xuất</button>
-          <button type="button" id="txTypeSwapBtn" class="tx-type-btn tx-type-swap" onclick="setTxType('swap')" title="Đổi date với kho khác: xuất date cũ ra, nhập date mới vào, số lượng giữ nguyên"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 2.4 H12 V0.8 L18 4 L12 7.2 V5.6 H1.5 Z" fill="#2e7d32"></path><path d="M18.5 8.4 H8 V6.8 L2 10 L8 13.2 V11.6 H18.5 Z" fill="#c0392b"></path></svg><span id="txTypeSwapLabel">☐ Đổi date</span></button>
-          <button type="button" id="txTypeRecvBtn" class="tx-type-btn tx-type-recv" onclick="setTxType('recv')" title="Nhận hàng từ kho khác của mình (không phải mua vào) — ghi rõ nhận từ kho nào để đối chiếu"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 5.4 H12 V3.8 L18 7 L12 10.2 V8.6 H1.5 Z" fill="#2e7d32"></path></svg><span id="txTypeRecvLabel">☐ Nhập từ kho</span></button>
-          <button type="button" id="txTypeSendBtn" class="tx-type-btn tx-type-send" onclick="setTxType('send')" title="Xuất hàng qua kho khác của mình (không phải bán) — ghi rõ xuất tới kho nào để đối chiếu"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 5.4 H12 V3.8 L18 7 L12 10.2 V8.6 H1.5 Z" fill="#c0392b"></path></svg><span id="txTypeSendLabel">☐ Xuất tới kho</span></button>
+          <button type="button" id="txTypeInBtn" class="tx-type-btn tx-type-in" onclick="pickTxType('in')">☐ Nhập</button>
+          <button type="button" id="txTypeOutBtn" class="tx-type-btn tx-type-out" onclick="pickTxType('out')">☐ Xuất</button>
+          <button type="button" id="txTypeSwapBtn" class="tx-type-btn tx-type-swap" onclick="pickTxType('swap')" title="Đổi date với kho khác: xuất date cũ ra, nhập date mới vào, số lượng giữ nguyên"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 2.4 H12 V0.8 L18 4 L12 7.2 V5.6 H1.5 Z" fill="#2e7d32"></path><path d="M18.5 8.4 H8 V6.8 L2 10 L8 13.2 V11.6 H18.5 Z" fill="#c0392b"></path></svg><span id="txTypeSwapLabel">☐ Đổi date</span></button>
+          <button type="button" id="txTypeRecvBtn" class="tx-type-btn tx-type-recv" onclick="pickTxType('recv')" title="Nhận hàng từ kho khác của mình (không phải mua vào) — ghi rõ nhận từ kho nào để đối chiếu"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 5.4 H12 V3.8 L18 7 L12 10.2 V8.6 H1.5 Z" fill="#2e7d32"></path></svg><span id="txTypeRecvLabel">☐ Nhập từ kho</span></button>
+          <button type="button" id="txTypeSendBtn" class="tx-type-btn tx-type-send" onclick="pickTxType('send')" title="Xuất hàng qua kho khác của mình (không phải bán) — ghi rõ xuất tới kho nào để đối chiếu"><svg width="19" height="13" viewBox="0 0 20 14" aria-hidden="true"><path d="M1.5 5.4 H12 V3.8 L18 7 L12 10.2 V8.6 H1.5 Z" fill="#c0392b"></path></svg><span id="txTypeSendLabel">☐ Xuất tới kho</span></button>
         </div>
+        <input type="number" id="txQty" class="small-input" style="margin-top:8px;" min="0" placeholder="SL" oninput="renderTxDateInputs()" onkeydown="if(isEnterKey(event)){event.preventDefault();focusFirstTxDate();}">
       </div>
       <div id="txAvailableDates"></div>
       <div id="txDatesArea" class="row" style="margin-top:8px;"></div>
@@ -1671,6 +1671,16 @@ function setTxType(type){
 /* Bỏ chọn cả Nhập lẫn Xuất — gọi sau khi ghi xong, sau khi xoá dữ liệu,
    và mỗi khi chuyển sang mục khác, để lần sau phải chọn lại từ đầu. */
 function resetTxType(){ setTxType(null); }
+
+/* Bấm nút Nhập / Xuất / Đổi date / Nhập từ kho / Xuất tới kho:
+   chọn loại xong tự nhảy xuống ô SL; nếu SL đã có số thì nhảy thẳng sang ô date. */
+function pickTxType(type){
+  setTxType(type);
+  let q = document.getElementById("txQty");
+  if(!q) return;
+  if((q.value || "").trim() === "") q.focus();
+  else if(typeof focusFirstTxDate === "function") focusFirstTxDate();
+}
 
 /* Đổi sang mã bình khác thì cũng bỏ chọn Nhập/Xuất.
    Chỉ reset khi mã thực sự khác lúc bấm chọn, để không bị mất lựa chọn oan
@@ -10918,7 +10928,7 @@ else window.addEventListener("load", cloudInit);
       if(typeof renderTxDateInputs === "function") renderTxDateInputs();
       if(typeof resetTxTypeIfCodeChanged === "function") resetTxTypeIfCodeChanged();
       hide();
-      var q = document.getElementById("txQty"); if(q) q.focus();
+      el.blur();          // chọn mã xong thì hạ bàn phím, bấm Nhập/Xuất rồi mới tới SL
       return;
     }
     var v = el.value, ins = code + " ";
