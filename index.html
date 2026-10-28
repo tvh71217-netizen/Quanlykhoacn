@@ -552,6 +552,15 @@ body.kb-open{padding-bottom:340px;}
   .user-bar .logout-link{margin-left:auto;color:var(--muted);text-decoration:underline;
     cursor:pointer;background:none;border:none;font-size:13px;padding:4px;
     white-space:nowrap;flex:0 0 auto;}
+
+  /* ===== Thanh gợi ý mã (ô Mã bình + các ô Ghi chú) — tự vẽ nên Android nào cũng hiện ===== */
+  #codeSugBar{position:fixed;left:0;right:0;bottom:0;z-index:9500;display:none;gap:8px;align-items:center;
+    overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap;padding:8px 10px;
+    background:#fff;border-top:1px solid var(--line);box-shadow:0 -2px 8px rgba(0,0,0,.12);}
+  #codeSugBar .sg-lbl{flex:0 0 auto;font-size:12px;color:var(--muted);}
+  #codeSugBar button{flex:0 0 auto;font-size:15px;font-weight:600;line-height:1;padding:9px 14px;border-radius:999px;
+    border:1px solid var(--brand);background:#eef5f0;color:var(--brand-dark);touch-action:manipulation;}
+  #codeSugBar button:active{background:var(--brand);color:#fff;}
 </style>
 </head>
 <body>
@@ -706,7 +715,7 @@ body.kb-open{padding-bottom:340px;}
         border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;margin-bottom:8px;"></div>
       <div class="row">
         <select id="txWh" onchange="resetTxType(); refreshTxCodeList(); renderTxDateInputs();"></select>
-        <input type="text" id="txCode" list="txCodeList" placeholder="Mã bình" oninput="renderTxDateInputs()" onchange="resetTxTypeIfCodeChanged()" onkeydown="if(isEnterKey(event)){event.preventDefault();resetTxTypeIfCodeChanged();document.getElementById('txQty').focus();}">
+        <input type="text" id="txCode" autocomplete="off" placeholder="Mã bình" oninput="renderTxDateInputs()" onchange="resetTxTypeIfCodeChanged()" onkeydown="if(isEnterKey(event)){event.preventDefault();resetTxTypeIfCodeChanged();document.getElementById('txQty').focus();}">
         <datalist id="txCodeList"></datalist>
         <input type="number" id="txQty" class="small-input" min="0" placeholder="SL" oninput="renderTxDateInputs()" onkeydown="if(isEnterKey(event)){event.preventDefault();focusFirstTxDate();}">
         <div class="tx-type-grid">
@@ -740,8 +749,8 @@ body.kb-open{padding-bottom:340px;}
           <li>Phần đối chiếu chỉ soi trong <b>30 ngày</b> gần nhất — chưa khớp thì lo đối chiếu sớm.</li>
         </ul>
       </div>
-      <div class="row" style="margin-top:10px;">
-        <button type="button" class="ghost" id="txBulkBtn" style="width:100%;" onclick="openTxBulk()">Nhập nhiều mã</button>
+      <div class="tx-type-grid" style="margin-top:8px;margin-bottom:6px;">
+        <button type="button" class="tx-type-btn tx-type-recv" id="txBulkBtn" onclick="openTxBulk()">Nhập nhiều mã</button>
       </div>
       <div class="row" style="margin-top:10px;">
         <button class="primary" id="txSubmitBtn">Thực hiện</button>
@@ -10811,6 +10820,128 @@ window.addEventListener("offline", function(){ setSync("wait", "⏳ mất mạng
 /* Script Firebase để defer nên phải chờ trang tải xong mới khởi động */
 if(document.readyState === "complete") cloudInit();
 else window.addEventListener("load", cloudInit);
+</script>
+
+<script>
+/* ===== GỢI Ý MÃ cho ô "Mã bình" (tab Nhập/Xuất) và cho ô Ghi chú =====
+   Gõ vài chữ đầu của mã -> hiện thanh chip ngay trên bàn phím, chạm chip để điền mã.
+   Ô Mã bình để trống thì hiện các mã vừa giao dịch gần đây. Không vẽ lại ô ghi chú
+   nên không làm mất chữ / con trỏ đang gõ. */
+(function(){
+  var bar = document.createElement("div");
+  bar.id = "codeSugBar";
+  document.body.appendChild(bar);
+  var cur = null;   // { el, kind:"tx"|"note", start, end }
+
+  function whOf(el){
+    if(el.id === "txCode") return (document.getElementById("txWh") || {}).value;
+    var k = el.getAttribute("data-nkey") || "";
+    return k.split("|")[0];
+  }
+  function tokenAt(el){
+    var v = el.value, c = el.selectionStart == null ? v.length : el.selectionStart;
+    if(el.id === "txCode") return { start: 0, end: v.length, text: v.trim() };
+    var a = c; while(a > 0 && !/[\s,;()\/]/.test(v.charAt(a-1))) a--;
+    var b = c; while(b < v.length && !/[\s,;()\/]/.test(v.charAt(b))) b++;
+    return { start: a, end: b, text: v.slice(a, c) };
+  }
+  function flat(x){ return String(x || "").toUpperCase().replace(/\s+/g, ""); }
+  function suggestions(el, text){
+    var whId = whOf(el);
+    var items = (db.items || []).filter(function(i){ return i.whId === whId; });
+    var key = flat(text), list = [];
+    if(!key){
+      if(el.id !== "txCode") return [];
+      var seen = {};
+      for(var i = db.transactions.length - 1; i >= 0 && list.length < 8; i--){
+        var t = db.transactions[i];
+        if(t.whId !== whId) continue;
+        var it = items.find(function(x){ return codeKey(x.code) === codeKey(t.code); });
+        if(!it || seen[codeKey(it.code)]) continue;
+        seen[codeKey(it.code)] = 1; list.push(it.code);
+      }
+      return list;
+    }
+    if(el.id !== "txCode" && key.length < 2) return [];
+    var st = [], inc = [];
+    items.forEach(function(i){
+      var c = flat(i.code);
+      if(c === key) return;                       // đã gõ đủ mã rồi thì khỏi gợi ý
+      if(c.indexOf(key) === 0) st.push(i.code); else if(c.indexOf(key) > 0) inc.push(i.code);
+    });
+    return st.concat(inc).slice(0, 12);
+  }
+  function place(){
+    var vv = window.visualViewport;
+    var off = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+    bar.style.bottom = off + "px";
+  }
+  function hide(){ bar.style.display = "none"; bar.innerHTML = ""; cur = null; }
+  function update(el){
+    if(!el || el.readOnly || el.disabled) return hide();
+    var isTx = el.id === "txCode";
+    var isNote = el.classList && el.classList.contains("note-box");
+    if(!isTx && !isNote) return hide();
+    var tk = tokenAt(el);
+    var list = suggestions(el, tk.text);
+    if(!list.length) return hide();
+    cur = { el: el, isTx: isTx, start: tk.start, end: tk.end };
+    bar.innerHTML = '<span class="sg-lbl">Mã:</span>' + list.map(function(c){
+      return '<button type="button" data-code="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
+    }).join("");
+    bar.style.display = "flex";
+    bar.scrollLeft = 0;
+    place();
+  }
+  function pick(code){
+    if(!cur) return;
+    var el = cur.el;
+    if(cur.isTx){
+      el.value = code;
+      if(typeof renderTxDateInputs === "function") renderTxDateInputs();
+      if(typeof resetTxTypeIfCodeChanged === "function") resetTxTypeIfCodeChanged();
+      hide();
+      var q = document.getElementById("txQty"); if(q) q.focus();
+      return;
+    }
+    var v = el.value, ins = code + " ";
+    el.value = v.slice(0, cur.start) + ins + v.slice(cur.end).replace(/^[ \t]/, "");
+    var pos = cur.start + ins.length;
+    try{ el.setSelectionRange(pos, pos); }catch(e){}
+    el.dispatchEvent(new Event("input", { bubbles: true }));   // để app tự lưu ghi chú
+    el.focus();
+    update(el);
+  }
+  // pointerdown + preventDefault: bấm chip không làm ô đang gõ mất focus (bàn phím không tụt xuống)
+  bar.addEventListener("pointerdown", function(ev){
+    var b = ev.target.closest("button[data-code]");
+    if(!b) return;
+    ev.preventDefault();
+    pick(b.getAttribute("data-code"));
+  });
+  bar.addEventListener("mousedown", function(ev){ ev.preventDefault(); });
+
+  document.addEventListener("focusin", function(ev){ update(ev.target); });
+  document.addEventListener("input", function(ev){ update(ev.target); });
+  document.addEventListener("keyup", function(ev){
+    var t = ev.target;
+    if(t && (t.id === "txCode" || (t.classList && t.classList.contains("note-box")))) update(t);
+  });
+  document.addEventListener("click", function(ev){
+    var t = ev.target;
+    if(t && t.classList && t.classList.contains("note-box")) update(t);   // chạm đổi vị trí con trỏ
+  });
+  document.addEventListener("focusout", function(){
+    setTimeout(function(){
+      var a = document.activeElement;
+      if(!a || !(a.id === "txCode" || (a.classList && a.classList.contains("note-box")))) hide();
+    }, 120);
+  });
+  if(window.visualViewport){
+    window.visualViewport.addEventListener("resize", place);
+    window.visualViewport.addEventListener("scroll", place);
+  }
+})();
 </script>
 </body>
 </html>
