@@ -8238,6 +8238,10 @@ function txBulkCommit(){
     document.getElementById("txBulkBrand").focus();
     return;
   }
+  // Giờ ghi lệch nhau 1ms theo đúng thứ tự dòng: ngày cũ (ghi bù) chỉ có độ chính xác tới giây nên
+  // nếu để trùng giờ thì lịch sử sắp xếp lại lung tung, không còn theo thứ tự đã dán
+  let baseTs = Date.parse(txTimestamp()), seq = 0;
+  let tsN = function(){ return new Date(baseTs + (seq++)).toISOString(); };
   let nTx = 0, nNew = 0;
   a.rows.forEach(r => {
     let key = codeKey(r.code);
@@ -8254,7 +8258,7 @@ function txBulkCommit(){
       item.dates = (item.dates || []).concat(r.dates);
       item.qty = (item.qty || 0) + r.qty;
       item.zeroSince = null;
-      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "in", qty: r.qty, dates: r.dates.slice(), ts: txTimestamp() });
+      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "in", qty: r.qty, dates: r.dates.slice(), ts: tsN() });
       syncPendingDates(item);
       nTx++;
     } else {
@@ -8265,7 +8269,7 @@ function txBulkCommit(){
       item.qty -= r.qty;
       if(item.qty === 0){ item.zeroSince = new Date().toISOString(); item.dates = []; }
       syncPendingDates(item);
-      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "out", qty: r.qty, dates: pk.removed, ts: txTimestamp() });
+      db.transactions.push({ id: uid(), whId: whId, code: item.code, type: "out", qty: r.qty, dates: pk.removed, ts: tsN() });
       nTx++;
     }
   });
