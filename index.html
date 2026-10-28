@@ -1036,7 +1036,7 @@ body.kb-open{padding-bottom:340px;}
         </div>
       </div>
       <textarea id="txBulkArea" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" style="height:96px;" placeholder="DK, 4, 1a/2b/1c&#10;DF40AL, 3, A&#10;55B24L, 2, B/C" oninput="txBulkPreview()"></textarea>
-      <p style="font-size:12px;color:var(--muted);margin:4px 0 6px;">Mỗi dòng: <b>mã, SL, date</b>. Cùng mã khác date: <code>DK, 4, 1a/2b/1c</code> = 1 bình A, 2 bình B, 1 bình C (cộng lại phải bằng SL). Một date chung cho cả dòng: <code>DF40AL, 3, A</code>. Date bỏ trống được; Xuất bỏ trống thì lấy bình cũ nhất.</p>
+      <p style="font-size:12px;color:var(--muted);margin:4px 0 6px;">Mỗi dòng: <b>mã, SL, date</b>. Cùng mã khác date: <code>DK, 4, 1a/2b/1c</code> = 1 bình A, 2 bình B, 1 bình C (cộng lại phải bằng SL). Một date chung cho cả dòng: <code>DF40AL, 3, A</code>. Viết số bình bằng x cũng được (<code>1xA/2xB</code>). <b>Bosch</b> phải dùng x: <code>BO 55B19L, 1, 1x11F</code>. Date bỏ trống được; Xuất bỏ trống thì lấy bình cũ nhất.</p>
       <div id="txBulkBrandRow" style="display:none;margin-bottom:6px;"><select id="txBulkBrand" style="width:100%;" onchange="txBulkPreview()"></select></div>
       <div id="txBulkPreview" style="font-size:13px;line-height:1.8;border-top:1px solid var(--line);padding-top:6px;"></div>
     </div>
@@ -7948,7 +7948,7 @@ function txBulkRenderKb(){
   document.getElementById("txBulkModeLbl").textContent = ({
     code: "Đang nhập: MÃ — gõ vài chữ đầu, chạm gợi ý bên dưới",
     qty:  "Đang nhập: SỐ LƯỢNG",
-    date: "Đang nhập: DATE — vd 1a/2b/1c (1 bình A, 2 bình B, 1 bình C)"
+    date: "Đang nhập: DATE — vd 1a/2b/1c · Bosch: 1x11F"
   })[info.mode];
   txBulkRenderSuggest(info);
 }
@@ -8074,15 +8074,22 @@ function txBulkLev(a, b){
     d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
   return d[m][n];
 }
-/* Date của 1 dòng: "1a/2b/1c" = 1 bình A, 2 bình B, 1 bình C. "A" một mình = chung cho cả SL.
-   Mỗi phần có thể có số đứng trước (số bình), không có thì tính 1 bình. */
-function txBulkDates(dstr, qty){
+/* Date của 1 dòng. Số bình viết bằng x: "1xA/2xB/1xC" (dùng được mọi hãng, kể cả date lạ như 1x11F).
+   Hãng khác Bosch còn viết tắt được "1a/2b/1c". Riêng BOSCH không dùng cách viết tắt (vì 11F là 1 date),
+   phần không có x luôn là date nguyên văn. "A" một mình = chung cho cả SL. */
+function txBulkIsBosch(code){
+  let k = codeKey(code);
+  return /^BO[\s\d\-]/.test(k) || db.items.some(i => codeKey(i.code) === k && String(i.brand || "").toUpperCase() === "BO");
+}
+function txBulkDates(dstr, qty, bosch){
   let toks = String(dstr || "").toUpperCase().split(/[\/\s,;]+/).filter(Boolean);
   if(toks.length === 0) return { dates: new Array(qty).fill("") };
   let items = [], hadCount = false;
   toks.forEach(t => {
     if(t === "?" || t === "-"){ items.push({ n: 1, d: "" }); return; }
-    let m = t.match(/^(\d+)([A-M])$/);
+    let mx = t.match(/^(\d+)X(.+)$/);
+    if(mx){ hadCount = true; items.push({ n: parseInt(mx[1], 10), d: mx[2] }); return; }
+    let m = bosch ? null : t.match(/^(\d+)([A-M])$/);
     if(m){ hadCount = true; items.push({ n: parseInt(m[1], 10), d: m[2] }); }
     else items.push({ n: 1, d: t });
   });
@@ -8114,11 +8121,13 @@ function txBulkParse(){
     r.qty = qty;
     if(!code){ r.code = "(trống)"; r.err = "Thiếu mã"; return; }
     if(qty <= 0 || qty > 200){ r.err = "Số lượng phải từ 1 đến 200"; return; }
-    let dd = txBulkDates(dstr, qty);
+    let dd = txBulkDates(dstr, qty, txBulkIsBosch(code));
     if(dd.err){ r.err = dd.err; return; }
     r.dates = dd.dates;
-    let bad = r.dates.find(d => d && dateOrdinal(d) === null);
-    if(bad) r.err = `Date "${bad}" không hợp lệ (dùng A–M hoặc 1–12)`;
+    let bad = r.dates.find(d => d && !/^[A-Z0-9]{1,4}$/.test(d));
+    if(bad){ r.err = `Date "${bad}" không hợp lệ (tối đa 4 chữ/số)`; return; }
+    let odd = r.dates.find(d => d && dateOrdinal(d) === null);
+    if(odd) r.warn = `date lạ "${odd}" (ngoài A–M, 1–12), vẫn ghi`;
   });
   return out;
 }
