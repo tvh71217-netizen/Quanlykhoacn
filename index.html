@@ -10840,10 +10840,21 @@ else window.addEventListener("load", cloudInit);
   }
   function tokenAt(el){
     var v = el.value, c = el.selectionStart == null ? v.length : el.selectionStart;
-    if(el.id === "txCode") return { start: 0, end: v.length, text: v.trim() };
-    var a = c; while(a > 0 && !/[\s,;()\/]/.test(v.charAt(a-1))) a--;
+    if(el.id === "txCode") return { starts: [0], end: v.length };
+    // cuối cụm = hết từ đang gõ
     var b = c; while(b < v.length && !/[\s,;()\/]/.test(v.charAt(b))) b++;
-    return { start: a, end: b, text: v.slice(a, c) };
+    // lùi lại tối đa 4 từ trên cùng một dòng (mã có thể gồm nhiều từ, vd "GS 46B24LS")
+    var starts = [], p = c;
+    while(starts.length < 4){
+      var a = p; while(a > 0 && !/[\s,;()\/]/.test(v.charAt(a-1))) a--;
+      if(a === p) break;                      // không còn chữ
+      starts.push(a);
+      var q = a, sp = 0;                      // sang từ trước: chỉ qua dấu cách/tab, không qua xuống dòng hay , ; ( ) /
+      while(q > 0 && /[ \t]/.test(v.charAt(q-1))){ q--; sp++; }
+      if(!sp || q === 0 || /[\n,;()\/]/.test(v.charAt(q-1))) break;
+      p = q;
+    }
+    return { starts: starts, end: b };
   }
   function flat(x){ return String(x || "").toUpperCase().replace(/\s+/g, ""); }
   function suggestions(el, text){
@@ -10867,7 +10878,8 @@ else window.addEventListener("load", cloudInit);
     items.forEach(function(i){
       var c = flat(i.code);
       if(c === key) return;                       // đã gõ đủ mã rồi thì khỏi gợi ý
-      if(c.indexOf(key) === 0) st.push(i.code); else if(c.indexOf(key) > 0) inc.push(i.code);
+      if(c.indexOf(key) === 0) st.push(i.code);
+      else if(c.indexOf(key) > 0 && (el.id === "txCode" || (key.length >= 3 && /[A-Z]/.test(key)))) inc.push(i.code);
     });
     return st.concat(inc).slice(0, 12);
   }
@@ -10882,10 +10894,15 @@ else window.addEventListener("load", cloudInit);
     var isTx = el.id === "txCode";
     var isNote = el.classList && el.classList.contains("note-box");
     if(!isTx && !isNote) return hide();
-    var tk = tokenAt(el);
-    var list = suggestions(el, tk.text);
+    var tk = tokenAt(el), list = [], start = tk.starts[0];
+    for(var k = tk.starts.length - 1; k >= 0; k--){      // cụm nhiều từ trước, ít từ sau
+      var c = el.selectionStart == null ? el.value.length : el.selectionStart;
+      var txt = isTx ? el.value.trim() : el.value.slice(tk.starts[k], c);
+      var l = suggestions(el, txt);
+      if(l.length){ list = l; start = tk.starts[k]; break; }
+    }
     if(!list.length) return hide();
-    cur = { el: el, isTx: isTx, start: tk.start, end: tk.end };
+    cur = { el: el, isTx: isTx, start: start, end: tk.end };
     bar.innerHTML = '<span class="sg-lbl">Mã:</span>' + list.map(function(c){
       return '<button type="button" data-code="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
     }).join("");
