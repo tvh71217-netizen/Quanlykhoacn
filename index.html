@@ -250,13 +250,13 @@
   .hc-dow span{font-size:12px;font-weight:700;color:var(--muted);padding:4px 0;}
   .hc-day{padding:9px 0;border-radius:50%;font-size:16px;font-weight:600;cursor:pointer;user-select:none;border:2px solid transparent;color:var(--ink);}
   .hc-day.off{color:#c9c9c0;cursor:default;font-weight:400;}
-  .hc-day.red{color:var(--danger);font-weight:800;}
-  .hc-day.today{border-color:var(--brand);}
-  .hc-day.sel{background:var(--brand);color:#fff;}
-  .hc-day.sel.red{background:var(--danger);color:#fff;}
+  .hc-day.red{background:var(--danger);color:#fff;font-weight:800;}
+  .hc-day.today{text-decoration:underline;}
+  .hc-day.sel{border-color:var(--brand);color:var(--brand-dark);font-weight:800;}
+  .hc-day.sel.red{color:#fff;}
   .hc-legend{font-size:12px;color:var(--muted);margin-top:8px;}
   .hc-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;}
-  .hc-dot.red{background:var(--danger);} .hc-dot.sel{background:var(--brand);}
+  .hc-dot.red{background:var(--danger);} .hc-dot.sel{background:transparent;border:2px solid var(--brand);box-sizing:border-box;}
   .day-confirm-tick{font-size:19px;line-height:1;cursor:pointer;padding:2px 3px;border-radius:5px;user-select:none;}
   .day-confirm-tick:active{background:#0001;}
   /* Nhập / Xuất nằm song song nhau ngay phía dưới dòng ngày */
@@ -869,7 +869,7 @@ body.kb-open{padding-bottom:340px;}
     </div>
     <div class="hc-grid hc-dow"><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span></div>
     <div class="hc-grid" id="hcDays"></div>
-    <div class="hc-legend"><span class="hc-dot red"></span> chưa đủ ✅ các kho &nbsp; <span class="hc-dot sel"></span> đang chọn</div>
+    <div class="hc-legend"><span class="hc-dot red"></span> chưa hoàn thành báo cáo &nbsp; <span class="hc-dot sel"></span> đang chọn</div>
     <div class="row" style="margin-top:8px;justify-content:space-between;">
       <button type="button" class="ghost" id="hcToday">Hôm nay</button>
       <button type="button" class="primary" id="hcClose">Xong</button>
@@ -1038,10 +1038,10 @@ body.kb-open{padding-bottom:340px;}
     <p class="modal-title" style="font-weight:bold;">Nhập / xuất nhiều mã cùng lúc</p>
     <div class="modal-scroll">
       <div class="row" style="margin-bottom:8px;">
-        <select id="txBulkWh" style="flex:1;" onchange="txBulkPreview()"></select>
-        <div style="display:flex;flex:1;gap:6px;">
-          <button type="button" id="txBulkInBtn" class="tx-type-btn tx-type-in" style="flex:1;" onclick="txBulkSetType('in')">☐ Nhập</button>
-          <button type="button" id="txBulkOutBtn" class="tx-type-btn tx-type-out" style="flex:1;" onclick="txBulkSetType('out')">☐ Xuất</button>
+        <select id="txBulkWh" style="flex:0 0 auto;" onchange="txBulkPreview()"></select>
+        <div style="display:flex;flex:0 0 auto;gap:6px;">
+          <button type="button" id="txBulkInBtn" class="tx-type-btn tx-type-in" style="flex:1 1 0;min-width:0;height:46px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;" onclick="txBulkSetType('in')">☐ Nhập</button>
+          <button type="button" id="txBulkOutBtn" class="tx-type-btn tx-type-out" style="flex:1 1 0;min-width:0;height:46px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;" onclick="txBulkSetType('out')">☐ Xuất</button>
         </div>
       </div>
       <textarea id="txBulkArea" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" style="height:96px;" placeholder="DK, 4, 1a/2b/1c&#10;DF40AL, 3, A&#10;55B24L, 2, B/C" oninput="txBulkPreview()"></textarea>
