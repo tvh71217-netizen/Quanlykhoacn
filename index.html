@@ -4640,7 +4640,7 @@ function renderTxDateInputs(){
         e.preventDefault();
         let next = document.getElementById("txDate-" + (i + 1)) ||
                    (isSwap ? document.getElementById("txNewDate-0") : null);
-        if(next) next.focus(); else document.querySelector("#tab-tx .primary")?.focus();
+        if(next) next.focus(); else goTxPartnerOrSubmit();
       }
     };
     area.appendChild(inp);
@@ -4660,7 +4660,7 @@ function renderTxDateInputs(){
         if(e.key === "Enter"){
           e.preventDefault();
           let next = document.getElementById("txNewDate-" + (i + 1));
-          if(next) next.focus(); else document.querySelector("#tab-tx .primary")?.focus();
+          if(next) next.focus(); else goTxPartnerOrSubmit();
         }
       };
       area.appendChild(inp);
@@ -4815,6 +4815,18 @@ function pickTxDateGroup(value, availCount){
     let el = document.getElementById("txDate-" + i);
     if(el && !el.value.trim()){ el.value = value; filled++; }
   }
+}
+/* Điền xong ô date cuối: nếu loại đang chọn có hỏi kho đối tác (Xuất tới kho / Nhập từ kho /
+   Đổi date) thì nhảy luôn sang ô chọn kho và bật danh sách kho lên; không có thì nhảy xuống nút Thực hiện. */
+function goTxPartnerOrSubmit(){
+  let sel = document.getElementById("txSwapWith");
+  if(!sel){ document.querySelector("#tab-tx .primary")?.focus(); return; }
+  try{ sel.focus(); }catch(e){}
+  try{ sel.scrollIntoView({block:"center", behavior:"auto"}); }catch(e){}
+  try{
+    if(typeof sel.showPicker === "function") sel.showPicker();
+    else sel.click();
+  }catch(e){}
 }
 function focusFirstTxDate(){
   renderTxDateInputs();
