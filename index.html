@@ -8612,6 +8612,12 @@ function ensureVisibleMinimal(el){
 
   function show(el, kind){
     clearTimeout(hideTimer);
+    /* Cùng một ô đang mở sẵn (VD vừa nhấn "1 bình" làm ô bị focus lại) -> KHÔNG dựng lại
+       thanh chọn số bình / không đặt lại lựa chọn, chỉ giữ bàn phím mở. */
+    if(el === target && mode === kind && pad.classList.contains("open")){
+      el.classList.add("kb-active");
+      return;
+    }
     if(target && target !== el) target.classList.remove("kb-active");
     target = el; mode = kind;
     el.classList.add("kb-active");
@@ -8817,19 +8823,34 @@ function ensureVisibleMinimal(el){
     hideTimer = setTimeout(function(){
       var a = document.activeElement;
       if(kindOf(a) || (a && pad.contains(a))) return;
+      /* Vừa chạm phím trên bàn phím riêng (iPhone đôi khi nhả con trỏ khi chạm nút) -> giữ mở */
+      if(target && target.isConnected && Date.now() - padPressAt < 700){ refocus(target); return; }
+      /* Bảng vừa được vẽ lại (đồng bộ từ máy chủ...) làm ô đang sửa bị thay bằng ô mới cùng id
+         -> chuyển sang ô mới thay vì đóng bàn phím */
+      if(target && !target.isConnected && target.id){
+        var nx = document.getElementById(target.id);
+        if(nx && kindOf(nx)){
+          nx.classList.add("kb-active");
+          target = nx;
+          refocus(nx);
+          return;
+        }
+      }
       hide();
     }, 200);
   });
 
   /* Bấm phím: xử lý ngay ở pointerdown/touchstart và giữ nguyên con trỏ ở ô đang nhập.
      (Không dùng sự kiện click: trên iOS, preventDefault ở touchstart sẽ nuốt mất click.) */
+  var padPressAt = 0;
   function onPress(e){
     var btn = e.target && e.target.closest ? e.target.closest("button") : null;
     if(!btn || !pad.contains(btn)) return;
+    padPressAt = Date.now();
     e.preventDefault();
     if(!target) return;
     var cnt = btn.getAttribute("data-count");
-    if(cnt !== null){ markCount(parseInt(cnt, 10)); refocus(target); return; }
+    if(cnt !== null){ markCount(parseInt(cnt, 10)); return; }   // chỉ đổi lựa chọn, không đụng tới con trỏ / bàn phím
     var key = btn.getAttribute("data-key");
     var act = btn.getAttribute("data-kb");
 
@@ -10970,12 +10991,37 @@ else window.addEventListener("load", cloudInit);
     if(down && (Math.abs(ev.clientX - down.x) > 8 || Math.abs(ev.clientY - down.y) > 8)) down.moved = true;
   });
   bar.addEventListener("pointercancel", function(){ down = null; });   // trình duyệt nhận cử chỉ cuộn
+  /* Chọn mã ở sự kiện CLICK (chip còn nguyên lúc đó) chứ không ở pointerup: trước đây chip bị xoá
+     và bàn phím hạ xuống ngay trong pointerup, cú click tiếp theo rơi xuống đúng chỗ ngón tay
+     — thường là các nút Nhập / Xuất / Đổi date bên dưới -> bấm nhầm. */
+  var armed = null, armTimer = null;
   bar.addEventListener("pointerup", function(ev){
     var d = down; down = null;
     if(!d || d.moved) return;
     ev.preventDefault();
-    pick(d.b.getAttribute("data-code"));
+    armed = d.b.getAttribute("data-code");
+    clearTimeout(armTimer);
+    armTimer = setTimeout(function(){ var c = armed; armed = null; if(c) donePick(c); }, 450);  // phòng khi không có click
   });
+  bar.addEventListener("click", function(ev){
+    var b = ev.target.closest("button[data-code]");
+    if(!b) return;
+    ev.preventDefault(); ev.stopPropagation();
+    var c = armed || b.getAttribute("data-code");
+    armed = null; clearTimeout(armTimer);
+    donePick(c);
+  });
+  var swallowUntil = 0;
+  function donePick(code){
+    swallowUntil = Date.now() + 500;
+    pick(code);
+  }
+  /* Nuốt mọi cú click "ma" ngoài thanh gợi ý trong nửa giây sau khi chọn mã */
+  document.addEventListener("click", function(ev){
+    if(Date.now() < swallowUntil && !(bar.contains(ev.target))){
+      ev.stopPropagation(); ev.preventDefault();
+    }
+  }, true);
   bar.addEventListener("mousedown", function(ev){ ev.preventDefault(); });
 
   document.addEventListener("focusin", function(ev){ update(ev.target); });
