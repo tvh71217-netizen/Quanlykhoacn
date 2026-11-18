@@ -8908,6 +8908,17 @@ function ensureVisibleMinimal(el){
       return;
     }
 
+    /* Ô date kế tiếp (nếu có): ghi nhớ trước để dù iPhone nhả focus giữa chừng
+       vẫn mở thẳng bàn phím riêng cho ô đó, không bị thoát bàn phím. */
+    var want = null;
+    if(mode === "date"){
+      var mm = (el.id || "").match(/^(txDate|txNewDate)-(\d+)$/);
+      if(mm){
+        want = document.getElementById(mm[1] + "-" + (parseInt(mm[2], 10) + 1));
+        if(!want && mm[1] === "txDate") want = document.getElementById("txNewDate-0");
+      }
+    }
+
     var handled = false;
     try{
       var ev = new KeyboardEvent("keydown", {key:"Enter", code:"Enter", keyCode:13, which:13, bubbles:true, cancelable:true});
@@ -8928,11 +8939,22 @@ function ensureVisibleMinimal(el){
         if(nx) refocus(nx);
       }
     }
+    if(want && want.isConnected){ padPressAt = Date.now(); openField(want); }
     setTimeout(function(){
       var a = document.activeElement;
       var k = kindOf(a);
-      if(k) show(a, k); else hide();
+      if(want && want.isConnected){ if(a !== want) openField(want); else show(a, k); }
+      else if(k) show(a, k);
+      else hide();
     }, 80);
+    /* iPhone đôi khi nhả focus muộn (sau khi nhấc tay) -> kiểm tra lại lần nữa */
+    if(want){
+      setTimeout(function(){
+        if(!want.isConnected || !pad.classList.contains("open") && !target) return;
+        if(document.activeElement !== want && target === want) refocus(want);
+        else if(!target) openField(want);
+      }, 350);
+    }
   }
 })();
 </script>
