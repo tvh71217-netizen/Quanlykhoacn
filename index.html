@@ -10092,7 +10092,8 @@ function setSync(state, text){
   var bar = document.getElementById("userBar");
   document.body.classList.toggle("unsynced", state === "wait" && !!bar && bar.style.display !== "none");
 }
-var APP_BUILD = "2026-10-16-e", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+var APP_BUILD = "2026-11-18-a", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+var _resumeUntil = 0, RESUME_GRACE_MS = 4000, _persistFail = "";
 /* Chip đồng bộ: ghi bình thường được máy chủ xác nhận trong chưa tới 1 giây, nên chỉ báo đỏ
    khi việc chờ kéo dài quá 2,5 giây (mất mạng / bị từ chối) — không chớp đỏ sau mỗi thao tác.
    Đang dọn dữ liệu cũ (quản lý) thì hiện chữ riêng, không báo đỏ. */
@@ -10101,10 +10102,43 @@ function refreshSyncChip(){
   clearTimeout(_waitTimer);
   if(!anyPend){ setSync("ok", "☁ đã đồng bộ"); return; }
   if(_purgeBusy && !_syncTimer){ setSync("ok", "🧹 đang dọn dữ liệu cũ…"); return; }
+  var pendNow = function(){ return Object.keys(_pend).some(function(k){ return _pend[k]; }); };
+  /* Vừa quay lại app (từ đa nhiệm): kết nối đang được nối lại, tối đa RESUME_GRACE_MS giây
+     chỉ hiện chip trung tính; hết hạn mà vẫn chưa được xác nhận mới báo đỏ. */
+  var left = _resumeUntil - Date.now();
+  if(left > 0){
+    setSync("", "🔄 đang kết nối lại…");
+    _waitTimer = setTimeout(function(){
+      if(pendNow()) setSync("wait", "⏳ chưa đồng bộ"); else refreshSyncChip();
+    }, left + 50);
+    return;
+  }
   _waitTimer = setTimeout(function(){
-    if(Object.keys(_pend).some(function(k){ return _pend[k]; })) setSync("wait", "⏳ chưa đồng bộ");
+    if(pendNow()) setSync("wait", "⏳ chưa đồng bộ");
   }, 2500);
 }
+
+/* Quay lại app sau khi ra đa nhiệm: iOS đã cắt kết nối ngầm, ép Firestore nối lại ngay
+   thay vì chờ nó tự phát hiện (mất hàng chục giây) và đẩy nốt thay đổi còn dở. */
+var _resuming = false;
+function cloudResume(){
+  if(!CLOUD_ON || !fbDb || !cloudUser || _resuming) return;
+  _resuming = true;
+  _resumeUntil = Date.now() + RESUME_GRACE_MS;
+  setSync("", "🔄 đang kết nối lại…");
+  var done = function(){
+    _resuming = false;
+    if(_syncTimer){ clearTimeout(_syncTimer); _syncTimer = null; cloudSync(); }
+    refreshSyncChip();
+  };
+  try{
+    fbDb.disableNetwork()
+      .then(function(){ return fbDb.enableNetwork(); })
+      .then(done, done);
+  }catch(e){ done(); }
+}
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) cloudResume(); });
+window.addEventListener("pageshow", function(ev){ if(ev.persisted || !document.hidden) cloudResume(); });
 function showSyncInfo(){
   var today = localDateStrOffset(0), okDay = "";
   try{ okDay = localStorage.getItem("qlk_last_purge") || ""; }catch(e){}
@@ -10117,6 +10151,7 @@ function showSyncInfo(){
     "Đang chờ máy chủ xác nhận: " + (wait.length ? wait.join(", ") : "không"),
     "Dọn dữ liệu cũ: " + (_purgeBusy ? "đang chạy" : (okDay === today ? "đã xong hôm nay" : "chưa xong"))
   ];
+  if(_persistFail) lines.push("⚠ Máy này KHÔNG lưu tạm được khi mất mạng/đóng app (" + _persistFail + ") — nhập xong nên chờ chip ☁ rồi hãy thoát.");
   if(_lastCloudErr) lines.push("Lỗi gần nhất: " + _lastCloudErr);
   // Số lượng dữ liệu đang có (lấy từ phần đã tải về, không tốn thêm lượt đọc)
   try{
@@ -10170,7 +10205,10 @@ function cloudInit(){
     }).then(function(){ checkLoginStorage(); });
   }catch(e){ checkLoginStorage(); }
   // Mất mạng vẫn gõ được, có mạng tự đẩy lên
-  fbDb.enablePersistence({ synchronizeTabs: true }).catch(function(){});
+  fbDb.enablePersistence({ synchronizeTabs: true }).catch(function(e){
+    _persistFail = String((e && e.code) || e || "?");
+    console.warn("Không bật được lưu tạm offline:", _persistFail);
+  });
   fbAuth.onAuthStateChanged(function(u){
     if(!u){ CLOUD_ON = false; cloudUser = null; showLogin(true); return; }
     loadProfile(u).then(function(){
@@ -10877,7 +10915,7 @@ function createStaffAccount(){
   });
 }
 
-window.addEventListener("online",  function(){ setSync("ok", "☁ đã đồng bộ"); });
+window.addEventListener("online",  function(){ _resumeUntil = Date.now() + RESUME_GRACE_MS; refreshSyncChip(); });
 window.addEventListener("offline", function(){ setSync("wait", "⏳ mất mạng — vẫn nhập được"); });
 
 /* Script Firebase để defer nên phải chờ trang tải xong mới khởi động */
