@@ -4134,6 +4134,11 @@ function normVN(s){
 }
 /* Các từ khoá trạng thái để gõ thẳng vào ô tìm kiếm, VD "cần bổ sung", "chưa nhập date" */
 function itemStatusKeywords(it){
+  // Gõ "bhđm" / "bảo hành đổi mới" -> ra các mã đang có bình tách làm BHĐM
+  let bh = (it.qty > 0 && (it.dates || []).some(isBhdm)) ? " bhdm bao hanh doi moi " : "";
+  return bh + itemStatusKeywords0(it);
+}
+function itemStatusKeywords0(it){
   // Gõ "đối chiếu" ở tab Tìm kiếm là lôi ra hết mã đang treo dòng cần đối chiếu
   if(reconCount(it) > 0) return "can doi chieu doi chieu lech date kho khac lay";
   if(itemMissingDates(it)) return "chua nhap date can nhap thieu date chua co date";
