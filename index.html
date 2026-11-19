@@ -1982,9 +1982,10 @@ function dateOrdinal(token){
   token = dateBase(token).toUpperCase();
   let val = dateOrdinalSingle(token);
   if(val !== null) return val;
-  // Date Bosch: SỐ + CHỮ (9E, 10E, 11F) -> xét cũ/mới theo SỐ phía trước (9 rồi 10, 11)
-  let bo = token.match(/^(\d{1,2})[A-M]$/);
-  if(bo) return parseInt(bo[1], 10);
+  // Date Bosch: SỐ + CHỮ (9E, 10E, 11F) -> xét cũ/mới theo SỐ phía trước (9 rồi 10, 11).
+  // Nếu SỐ giống nhau (11G, 11K) thì xét tiếp CHỮ phía sau (G cũ hơn K): cộng thêm phần lẻ nhỏ theo chữ.
+  let bo = token.match(/^(\d{1,2})([A-M])$/);
+  if(bo) return parseInt(bo[1], 10) + (bo[2].charCodeAt(0) - 64) / 100;
   // Date 2 ký tự (VD: A1, B5...) sẽ tính theo ký tự đầu tiên
   if(token.length === 2) return dateOrdinalSingle(token[0]);
   return null;
