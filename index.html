@@ -3470,6 +3470,11 @@ function toggleNoteScopeExpanded(){
   let head = document.getElementById("noteScopeHead");
   if(head) head.classList.toggle("open", noteScopeExpanded);
 }
+/* Dấu ❌ cạnh tên kho: kho chưa bấm ✅ "Đã hoàn thành" báo cáo của ngày đang xem */
+function noteScopeMissMark(whId, dateStr){
+  if(getDayConfirm(whId, dateStr) === "done") return "";
+  return ` <span class="scope-miss" title="Chưa hoàn thành báo cáo ngày ${fmtDateVN(dateStr)}" style="color:var(--danger,#c0392b);font-weight:800;">❌</span>`;
+}
 function refreshNoteScope(){
   let bar = document.getElementById("noteScopeBar");
   if(!bar) return;
@@ -3482,13 +3487,14 @@ function refreshNoteScope(){
     return;
   }
   let allChecked = db.warehouses.every(w => noteScopeSet.has(w.id));
+  let selDay = getHistDate();
   setPickerCount("noteScopeCount",
     db.warehouses.filter(w => noteScopeSet.has(w.id)).length, db.warehouses.length, "kho");
   bar.innerHTML = `<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;margin-right:12px;">
       <input type="checkbox" ${allChecked ? "checked" : ""} onchange="toggleNoteScopeAll(this.checked)"> Tất cả
     </label>` +
     db.warehouses.map(w => `<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;margin-right:12px;">
-      <input type="checkbox" class="noteScopeChk" value="${w.id}" ${noteScopeSet.has(w.id) ? "checked" : ""} onchange="toggleNoteScopeOne('${w.id}', this.checked)"> ${escapeHtml(w.name)}
+      <input type="checkbox" class="noteScopeChk" value="${w.id}" ${noteScopeSet.has(w.id) ? "checked" : ""} onchange="toggleNoteScopeOne('${w.id}', this.checked)"> ${escapeHtml(w.name)}${noteScopeMissMark(w.id, selDay)}
     </label>`).join("");
   bar.style.display = noteScopeExpanded ? "flex" : "none";
 }
@@ -3728,6 +3734,7 @@ function setDayConfirm(whId, dateStr, status){
   }
   saveDBSoon();
   refreshNoteCompareStrips();
+  refreshNoteScope();
   let hb = document.getElementById("histDateBtn");
   if(hb){ getHistDate(); }
 }
