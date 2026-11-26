@@ -10182,7 +10182,7 @@ function setSync(state, text){
   var bar = document.getElementById("userBar");
   document.body.classList.toggle("unsynced", state === "wait" && !!bar && bar.style.display !== "none");
 }
-var APP_BUILD = "2026-11-26-a", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+var APP_BUILD = "2026-11-26-c", _lastCloudErr = "", _errLog = [], _pend = {}, _waitTimer = null;
 var _resumeUntil = 0, RESUME_GRACE_MS = 4000, _persistFail = "";
 /* Chip đồng bộ: ghi bình thường được máy chủ xác nhận trong chưa tới 1 giây, nên chỉ báo đỏ
    khi việc chờ kéo dài quá 2,5 giây (mất mạng / bị từ chối) — không chớp đỏ sau mỗi thao tác.
@@ -10243,6 +10243,11 @@ function showSyncInfo(){
   ];
   if(_persistFail) lines.push("⚠ Máy này KHÔNG lưu tạm được khi mất mạng/đóng app (" + _persistFail + ") — nhập xong nên chờ chip ☁ rồi hãy thoát.");
   if(_lastCloudErr) lines.push("Lỗi gần nhất: " + _lastCloudErr);
+  if(_errLog.length){
+    lines.push("— 5 lỗi gần đây (mới nhất trên cùng) —");
+    _errLog.slice().reverse().forEach(function(x){ lines.push(x); });
+    lines.push("Gợi ý: failed-precondition = nhiều tab/lưu tạm bị tab khác giữ; unavailable = mạng chập chờn; permission-denied = chưa được cấp quyền ghi; resource-exhausted = hết quota Firebase hôm nay.");
+  }
   // Số lượng dữ liệu đang có (lấy từ phần đã tải về, không tốn thêm lượt đọc)
   try{
     var lim = oldestKeptDate(), txs = _incoming.transactions || [], nts = _incoming.notes || [];
@@ -10263,8 +10268,14 @@ function showSyncInfo(){
   }catch(e){}
   alert(lines.join("\n"));
 }
-function cloudError(e){
-  console.error("Lỗi đồng bộ:", e);
+function cloudError(e, where){
+  console.error("Lỗi đồng bộ:", where, e);
+  try{
+    var msg = String((e && e.message) || "").replace(/\s+/g, " ").slice(0, 160);
+    _errLog.push(new Date().toLocaleTimeString("vi-VN") + " · " + (where || "?") + " · " +
+      String((e && e.code) || e || "?") + (msg ? " · " + msg : ""));
+    if(_errLog.length > 5) _errLog.shift();
+  }catch(_){}
   _lastCloudErr = String((e && e.code) || e || "?") + " lúc " + new Date().toLocaleTimeString("vi-VN");
   setSync("wait", "⏳ chưa đồng bộ");
   var m = String(e && e.code || e || "");
@@ -10333,21 +10344,43 @@ function loadProfile(u){
 }
 
 /* ---------- Nghe dữ liệu từ máy chủ ---------- */
+var _subRetry = {};
+function listenRetry(name, attach){
+  /* Listener của Firestore CHẾT hẳn khi gặp lỗi (vd failed-precondition khi mở nhiều tab,
+     hoặc lưu tạm offline bị tab khác giữ) -> trước đây chip đỏ mãi tới khi F5.
+     Giờ ghi lỗi rồi tự nghe lại sau vài giây (trừ lỗi quyền). */
+  var go = function(){
+    attach(function(e){
+      cloudError(e, "nghe dữ liệu: " + name);
+      var code = String(e && e.code || "");
+      if(/permission-denied|unauthenticated/.test(code)) return;
+      _subRetry[name] = (_subRetry[name] || 0) + 1;
+      setTimeout(go, Math.min(30000, 3000 * _subRetry[name]));
+    });
+  };
+  go();
+}
 function startCloudListeners(){
   ["warehouses", "items", "transactions", "notes"].forEach(function(c){
-    fbDb.collection(c).onSnapshot({ includeMetadataChanges: true }, function(snap){
-      _incoming[c] = snap.docs.map(function(d){
-        var o = d.data() || {}; o.id = d.id; return o;
-      });
-      _pend[c] = !!snap.metadata.hasPendingWrites;
-      refreshSyncChip();
-      applyCloudSoon();
-    }, cloudError);
+    listenRetry(c, function(onErr){
+      fbDb.collection(c).onSnapshot({ includeMetadataChanges: true }, function(snap){
+        _subRetry[c] = 0;
+        _incoming[c] = snap.docs.map(function(d){
+          var o = d.data() || {}; o.id = d.id; return o;
+        });
+        _pend[c] = !!snap.metadata.hasPendingWrites;
+        refreshSyncChip();
+        applyCloudSoon();
+      }, onErr);
+    });
   });
-  fbDb.collection("settings").doc("brands").onSnapshot(function(d){
-    _incoming.brands = d.exists ? d.data() : null;
-    applyCloudSoon();
-  }, cloudError);
+  listenRetry("brands", function(onErr){
+    fbDb.collection("settings").doc("brands").onSnapshot(function(d){
+      _subRetry.brands = 0;
+      _incoming.brands = d.exists ? d.data() : null;
+      applyCloudSoon();
+    }, onErr);
+  });
 }
 
 /* Đang gõ dở thì khoan vẽ lại, tránh mất chữ / nhảy con trỏ */
@@ -10805,7 +10838,7 @@ function cloudSync(force){
   setSync("wait", "⏳ đang gửi…");
   commitInChunks(ops)
     .then(function(){ setSync("ok", "☁ đã đồng bộ"); })
-    .catch(function(e){ _shadow = prev; cloudError(e); });
+    .catch(function(e){ _shadow = prev; cloudError(e, "gửi thay đổi lên máy chủ"); });
 }
 
 /* ================= NHẬT KÝ THAO TÁC ================= */
@@ -10953,14 +10986,14 @@ function askDeleteUser(uid){
         loadUserList();
         alert("Đã xoá " + (u.code || "") + ".\n\nMã này chưa dùng lại được cho người mới — muốn dùng lại thì vào Firebase Console → Authentication → Users xoá nốt dòng " +
               (u.code || "") + "@khoacn.local.");
-      }).catch(cloudError);
+      }).catch(function(e){ cloudError(e, "quản lý người dùng"); });
     }, "Xoá tài khoản " + (u.code || "") + " — cần mật khẩu quản lý.");
   });
 }
 
 function toggleUserActive(uid, on){
   fbDb.collection("users").doc(uid).set({ active: !!on }, { merge: true })
-    .then(loadUserList).catch(cloudError);
+    .then(loadUserList).catch(function(e){ cloudError(e, "quản lý người dùng"); });
 }
 
 /* Tạo tài khoản bằng một kết nối phụ, để phiên đăng nhập của quản lý không bị đá ra */
