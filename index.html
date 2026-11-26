@@ -10182,7 +10182,7 @@ function setSync(state, text){
   var bar = document.getElementById("userBar");
   document.body.classList.toggle("unsynced", state === "wait" && !!bar && bar.style.display !== "none");
 }
-var APP_BUILD = "2026-11-18-a", _lastCloudErr = "", _pend = {}, _waitTimer = null;
+var APP_BUILD = "2026-11-26-a", _lastCloudErr = "", _pend = {}, _waitTimer = null;
 var _resumeUntil = 0, RESUME_GRACE_MS = 4000, _persistFail = "";
 /* Chip đồng bộ: ghi bình thường được máy chủ xác nhận trong chưa tới 1 giây, nên chỉ báo đỏ
    khi việc chờ kéo dài quá 2,5 giây (mất mạng / bị từ chối) — không chớp đỏ sau mỗi thao tác.
@@ -10191,7 +10191,7 @@ function refreshSyncChip(){
   var anyPend = Object.keys(_pend).some(function(k){ return _pend[k]; });
   clearTimeout(_waitTimer);
   if(!anyPend){ setSync("ok", "☁ đã đồng bộ"); return; }
-  if(_purgeBusy && !_syncTimer){ setSync("ok", "🧹 đang dọn dữ liệu cũ…"); return; }
+  if(_purgeBusy){ setSync("ok", "🧹 đang dọn dữ liệu cũ…"); return; }   /* ghi của mình xếp hàng sau lượt xoá nên chậm là bình thường, không báo đỏ */
   var pendNow = function(){ return Object.keys(_pend).some(function(k){ return _pend[k]; }); };
   /* Vừa quay lại app (từ đa nhiệm): kết nối đang được nối lại, tối đa RESUME_GRACE_MS giây
      chỉ hiện chip trung tính; hết hạn mà vẫn chưa được xác nhận mới báo đỏ. */
@@ -10205,7 +10205,7 @@ function refreshSyncChip(){
   }
   _waitTimer = setTimeout(function(){
     if(pendNow()) setSync("wait", "⏳ chưa đồng bộ");
-  }, 2500);
+  }, 7000);   /* mạng 4G/wifi yếu hay mất 3-6 giây mới được xác nhận -> 2,5s báo đỏ quá sớm */
 }
 
 /* Quay lại app sau khi ra đa nhiệm: iOS đã cắt kết nối ngầm, ép Firestore nối lại ngay
@@ -10546,7 +10546,7 @@ function deleteDocsInChunks(refs){
         var b = fbDb.batch();
         part.forEach(function(r){ b.delete(r); });
         return b.commit();
-      });
+      }).then(function(){ return new Promise(function(ok){ setTimeout(ok, 1500); }); });  /* nghỉ giữa các gói để không chặn ghi của nhân viên */
     })(refs.slice(i, i + CH));
   }
   return chain;
@@ -10560,11 +10560,12 @@ function purgeAuditOld(limit, guard){
     return b.commit().then(function(){ return purgeAuditOld(limit, guard + 1); });
   });
 }
-var _purgeBusy = false, PURGE_MAX_PER_DAY = 5000;
+var _purgeBusy = false, PURGE_MAX_PER_DAY = 2500;
 function cloudPurgeOld(){
   if(!CLOUD_ON || !fbDb || !cloudUser || cloudUser.role !== "admin") return;
   if(!_incoming.transactions || !_incoming.notes) return;
   if(_purgeBusy) return;                 // đang dọn dở thì không chạy chồng
+  if(_syncTimer || Object.keys(_pend).some(function(k){ return _pend[k]; })){ setTimeout(cloudPurgeOld, 20000); return; }   // đang có thao tác chưa xong -> để lúc rảnh
   var today = localDateStrOffset(0);
   try{
     if(localStorage.getItem("qlk_last_purge") === today) return;
